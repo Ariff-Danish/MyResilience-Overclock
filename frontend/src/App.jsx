@@ -260,8 +260,8 @@ function App() {
 
           const alertString = JSON.stringify(data.alerts)
 
-          // Only trigger agents if nearby alerts changed, or demo toggle
-          if (alertString !== lastAlertHash || demoMode) {
+          // Only trigger agents if nearby alerts changed
+          if (alertString !== lastAlertHash) {
             setLastAlertHash(alertString)
             if (data.alerts && data.alerts.length > 0) {
               triggerLiveAlert(data.alerts[0].type, data.alerts[0].description)
@@ -451,6 +451,7 @@ function App() {
 
   const triggerLiveAlert = async (alertType, desc) => {
     try {
+      setEvacLoading(true)
       const body = {
         inventory, team,
         location: userRegionDisplay || 'Kuala Lumpur, Malaysia',
@@ -495,6 +496,8 @@ function App() {
       }
     } catch (err) {
       console.error(err)
+    } finally {
+      setEvacLoading(false)
     }
   }
 
@@ -1243,19 +1246,14 @@ function App() {
         <>
           <div className="panel evac-empty-state">
             <div style={{fontSize:'4rem', marginBottom:'1rem'}}>🗺️</div>
-            <h3>Evacuation Advisor Ready</h3>
+            <h3>Autonomous System Standby</h3>
             <p className="text-muted" style={{maxWidth:'500px', margin:'0 auto 0.75rem', lineHeight:'1.6'}}>
-              Click <strong>Run Advisory</strong> to generate a real-time evacuation plan with shelter locations,
+              Awaiting MET Malaysia triggers. When a threat is detected, the system will automatically generate an evacuation plan with shelter locations,
               enforcement agencies, safe routes, and avoidance zones —{' '}
               {userRegionDisplay
-                ? <strong style={{color:'var(--info)'}}>tailored for {userRegionDisplay.split(',')[0]}</strong>
-                : 'for your current location across all of Malaysia'}.
+                ? <strong style={{color:'var(--info)'}}>tailored dynamically for {userRegionDisplay.split(',')[0]}</strong>
+                : 'based on your live GPS location anywhere in Malaysia'}.
             </p>
-            {!userRegionDisplay && (
-              <p className="text-muted" style={{fontSize:'0.8rem', margin:'0 auto', maxWidth:'400px'}}>
-                💡 Click <strong>Locate Me</strong> first for a location-specific advisory (Sabah, Sarawak, or any Malaysian state).
-              </p>
-            )}
           </div>
 
           {/* Official Malaysian Data Sources Panel */}
