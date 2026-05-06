@@ -1093,3 +1093,175 @@ input:checked + .slider:before { transform: translateX(26px); background-color: 
 .shelter-card.type-fire    { border-left: 3px solid #f97316; }
 .shelter-card.type-hospital{ border-left: 3px solid #ef4444; }
 .shelter-card.type-nadma   { border-left: 3px solid #a855f7; }
+
+/* ── Geolocation Features ────────────────────── */
+
+/* Pulsing "You Are Here" dot for Leaflet */
+.user-loc-dot {
+  width: 14px; height: 14px;
+  background: #3b82f6;
+  border: 2.5px solid #fff;
+  border-radius: 50%;
+  position: relative;
+  box-shadow: 0 0 6px rgba(59,130,246,0.7);
+}
+.user-loc-ring {
+  position: absolute;
+  width: 30px; height: 30px;
+  border: 2px solid rgba(59,130,246,0.5);
+  border-radius: 50%;
+  top: -10px; left: -10px;
+  animation: loc-pulse 1.8s ease-out infinite;
+}
+@keyframes loc-pulse {
+  0%   { transform: scale(0.4); opacity: 1; }
+  100% { transform: scale(1.6); opacity: 0; }
+}
+
+/* Locate Me button */
+.btn-locate {
+  background: rgba(59,130,246,0.12);
+  color: #3b82f6;
+  border: 1px solid rgba(59,130,246,0.4);
+  font-weight: 600;
+  padding: 0.6rem 1.2rem;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-size: 0.9rem;
+}
+.btn-locate:hover:not(:disabled) {
+  background: rgba(59,130,246,0.22);
+  box-shadow: 0 0 14px rgba(59,130,246,0.3);
+  transform: translateY(-1px);
+}
+.btn-locate.located {
+  background: rgba(132,204,22,0.12);
+  color: #84cc16;
+  border-color: rgba(132,204,22,0.4);
+}
+.btn-locate:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Location info / error bars */
+.location-info-bar {
+  background: rgba(59,130,246,0.08);
+  border: 1px solid rgba(59,130,246,0.25);
+  border-radius: 6px;
+  padding: 0.6rem 1rem;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  margin-bottom: 1rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  align-items: center;
+}
+.location-info-bar strong { color: #3b82f6; }
+.location-error-bar {
+  background: rgba(239,68,68,0.08);
+  border: 1px solid rgba(239,68,68,0.25);
+  border-radius: 6px;
+  padding: 0.6rem 1rem;
+  font-size: 0.82rem;
+  color: var(--danger);
+  margin-bottom: 1rem;
+}
+.nearest-summary { color: var(--text-muted); }
+.nearest-summary strong { color: #84cc16; }
+
+/* Distance badge on shelter cards */
+.distance-badge {
+  font-size: 0.72rem;
+  font-family: 'JetBrains Mono', monospace;
+  background: rgba(59,130,246,0.12);
+  border: 1px solid rgba(59,130,246,0.3);
+  color: #3b82f6;
+  padding: 0.15rem 0.45rem;
+  border-radius: 20px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* Nearest shelter card highlight */
+.shelter-card.nearest {
+  box-shadow: 0 0 0 1px rgba(132,204,22,0.5), 0 0 12px rgba(132,204,22,0.15);
+}
+.nearest-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  background: rgba(132,204,22,0.15);
+  border: 1px solid rgba(132,204,22,0.4);
+  color: #84cc16;
+  padding: 0.1rem 0.4rem;
+  border-radius: 20px;
+  margin-left: 0.4rem;
+  vertical-align: middle;
+  letter-spacing: 0.5px;
+}
+
+/* Leaflet tooltip override */
+.leaflet-route-tip {
+  background: #1c2128 !important;
+  border: 1px solid #30363d !important;
+  color: #84cc16 !important;
+  font-size: 0.78rem;
+  font-weight: 600;
+  border-radius: 4px;
+  padding: 0.3rem 0.6rem;
+}
+
+/* ── Proximity Awareness ─────────────────────── */
+
+/* Proximity distance tags on alert boxes */
+.proximity-tag {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 700;
+  padding: 0.15rem 0.5rem;
+  border-radius: 20px;
+  margin-top: 0.4rem;
+}
+.proximity-tag.nearby {
+  background: rgba(239,68,68,0.15);
+  border: 1px solid rgba(239,68,68,0.4);
+  color: #ef4444;
+}
+.proximity-tag.distant {
+  background: rgba(139,148,158,0.12);
+  border: 1px solid rgba(139,148,158,0.25);
+  color: #8b949e;
+}
+
+/* Distant alerts notice box — appears in Active Intel when threats exist in other regions */
+.distant-alerts-notice {
+  background: rgba(139,148,158,0.06);
+  border: 1px solid rgba(139,148,158,0.18);
+  border-radius: 6px;
+  padding: 0.65rem 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-top: 0.5rem;
+}
+.distant-label {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  letter-spacing: 0.4px;
+  margin-bottom: 0.1rem;
+}
+.distant-alert-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.distant-alert-type {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

@@ -7,6 +7,8 @@
 [![React](https://img.shields.io/badge/React-18-61DAFB?logo=react)](https://react.dev)
 [![Groq](https://img.shields.io/badge/LLM-Groq%20Llama--3.1-orange)](https://console.groq.com)
 [![MET Malaysia](https://img.shields.io/badge/Data-MET%20Malaysia%20API-green)](https://api.data.gov.my)
+[![Twilio](https://img.shields.io/badge/SMS-Twilio-red)](https://twilio.com)
+[![Leaflet](https://img.shields.io/badge/Map-Leaflet.js-brightgreen)](https://leafletjs.com)
 
 ---
 
@@ -21,12 +23,14 @@ Malaysia experiences flash floods, thunderstorms, and haze events year-round —
 ## 🧠 System Overview: End-to-End Flow
 
 ```
-[MET Malaysia API] ──► [Watcher Agent] ──► [Assessor Agent] ──► [Coordinator Agent]
+[MET Malaysia API] —► [Watcher Agent] —► [Assessor Agent] —► [Coordinator Agent]
        │                  (Threat Level)       (Survival Days)       (Dispatch Decision)
        │                                                                     │
-[Warning API]                                                    [Email to User / Contacts]
+[Warning API]                                             [SMS via Twilio / Email to Contacts]
        │
-[Inventory Changes] ──► [Inventory Analyst] ──► [P.A.C.E. Strategist] ──► [Dashboard]
+[Inventory Changes] —► [Inventory Analyst] —► [P.A.C.E. Strategist] —► [Dashboard]
+       │
+[User Location] —► [Evacuation Advisor] —► [Threat Map: Shelters, Routes, Avoidance Zones]
 ```
 
 ### Input → Processing → Decision → Action
@@ -42,7 +46,7 @@ Malaysia experiences flash floods, thunderstorms, and haze events year-round —
 
 ## 🤖 The Agent Network
 
-MyResilience uses **5 specialised AI agents**, each with a clearly scoped role and strict JSON output contract. No agent does another's job.
+MyResilience uses **6 specialised AI agents**, each with a clearly scoped role and strict JSON output contract. No agent does another's job.
 
 ### 1. 🔭 The Watcher *(Meteorologist)*
 - **Trigger:** Every 5 minutes (Warning API) + Daily (Forecast API)
@@ -76,16 +80,23 @@ MyResilience uses **5 specialised AI agents**, each with a clearly scoped role a
   - **EMERGENCY** — Critical threat with low survival days. Sends urgent alert to the user **and** all designated Emergency Contacts.
 - **Output:** Formatted emails using structured templates with dynamic data injection.
 
+### 6. 🗺️ The Evacuation Advisor *(Field Commander)*
+- **Trigger:** Manual (user clicks Run Advisory) or auto-triggered on `immediate`/`prepare` urgency
+- **Input:** Disaster type, severity, user location, team roster
+- **Output:** `{ shelter_locations[], enforcement_agencies[], routes_to_take[], areas_to_avoid, sms_alert_text, reasoning }`
+- **Intelligence:** NADMA-compliant evacuation logic for the Klang Valley. Returns real PJ/KL shelter coordinates, Bomba, PDRM, Hospital and JKM agency points. Dispatches bulk SMS via Twilio on request.
+
 ---
 
 ## 🔀 Agentic Decision Flow (Minimum 3 Steps)
 
 ```
-Step 1 — DETECT:   Watcher parses MET API → classifies severity
-Step 2 — ASSESS:   Assessor computes survival window + applies mobility override
-Step 3 — DECIDE:   Coordinator selects Playbook mode (Preparedness/Advisory/Emergency)
-Step 4 — ACT:      Email dispatched autonomously via Gmail SMTP
-Step 5 — LOG:      Activity Network records agent reasoning for full transparency
+Step 1 — DETECT:    Watcher parses MET API → classifies severity
+Step 2 — ASSESS:    Assessor computes survival window + applies mobility override
+Step 3 — DECIDE:    Coordinator selects Playbook mode (Preparedness/Advisory/Emergency)
+Step 4 — ACT:       Email dispatched autonomously via Gmail SMTP / SMS via Twilio
+Step 5 — ADVISE:    Evacuation Advisor generates shelter map + SMS alert text
+Step 6 — LOG:       Activity Network records agent reasoning for full transparency
 ```
 
 All steps execute **without user intervention** after initialization.
@@ -118,11 +129,12 @@ All steps execute **without user intervention** after initialization.
 ## 🗂️ Project Structure
 
 ```
-V2-AI-Hackathon-Overclock/
+MyResilience-Overclock/
 ├── backend/
 │   ├── app/
 │   │   ├── agents/
-│   │   │   ├── safesync_agents.py   # All 5 agent prompts + functions
+│   │   │   ├── safesync_agents.py   # All 6 agent prompts + Groq functions
+│   │   │   ├── sms_tools.py         # Twilio SMS bulk dispatcher
 │   │   │   ├── gmail_tools.py       # SMTP email sender
 │   │   │   └── config.py            # Groq client + env loader
 │   │   └── routers/
@@ -133,7 +145,7 @@ V2-AI-Hackathon-Overclock/
 │   └── .env                         # ← NOT committed to git
 └── frontend/
     └── src/
-        ├── App.jsx                  # Main React application
+        ├── App.jsx                  # Main React app (5 tabs, Leaflet map)
         └── App.css                  # Tactical dark-mode design system
 ```
 
@@ -183,9 +195,13 @@ Open [http://localhost:5173](http://localhost:5173)
 | `NOTIFICATION_EMAIL` | Email address that receives Advisory alerts | ✅ Yes |
 | `GMAIL_USER` | Gmail address used to send emails | ✅ Yes |
 | `GMAIL_APP_PASSWORD` | 16-character Gmail App Password | ✅ Yes |
+| `TWILIO_ACCOUNT_SID` | Twilio Account SID for SMS dispatch | Optional |
+| `TWILIO_AUTH_TOKEN` | Twilio Auth Token | Optional |
+| `TWILIO_PHONE_NUMBER` | Twilio sender phone number (`+60...`) | Optional |
 | `ALLOWED_ORIGINS` | Frontend CORS origins | Optional |
 
-> **Security Note:** Never commit your `.env` file. The `.gitignore` should include `backend/.env`.
+> **Security Note:** Never commit your `.env` file. The `.gitignore` already excludes `backend/.env`.
+> **Twilio Note:** SMS dispatch is gracefully skipped if Twilio env vars are absent — the system still generates the SMS alert text for manual use.
 
 ---
 
@@ -197,6 +213,37 @@ Open [http://localhost:5173](http://localhost:5173)
 | MET Malaysia Warnings | `api.data.gov.my/weather/warning` | Every 5 minutes |
 
 Both APIs are **free and require no API key**. The system filters for the Petaling / Selangor region by default, configurable in `emergency.py`.
+
+---
+
+## 🗺️ Threat Map Features
+
+The **Threat Map** tab provides a real-time geospatial evacuation interface:
+
+| Feature | Description |
+|---|---|
+| **Evacuation Advisor** | AI agent generates shelter locations, enforcement agencies, safe routes, and avoidance zones for the Klang Valley |
+| **Scenario Selector** | Choose disaster type manually: Auto (Live), Flood, Storm, Haze, Fire, Earthquake |
+| **Leaflet Map** | Interactive OpenStreetMap with emoji markers: 🏠 Shelter · 🚔 Police · 🚒 Bomba · 🏥 Hospital · 🏛️ NADMA |
+| **📍 Locate Me** | Detects your GPS coordinates via browser geolocation API |
+| **Nearest Shelter** | Haversine distance calculation ranks all shelters by proximity; nearest highlighted with 🏆 badge |
+| **Route Line** | Dashed green polyline drawn from your location to the nearest shelter on the map |
+| **Shelter Cards** | Expandable cards show Authority, Capacity, Contact number, and GPS link for each location |
+| **SMS Alert Text** | Pre-formatted 160-char SMS generated for broadcast; dispatched via Twilio on demand |
+
+---
+
+## ⚡ Dashboard Features
+
+| Feature | Description |
+|---|---|
+| **Asset Readiness Radar** | Recharts radar showing Water / Food / Medical / Power / Readiness score |
+| **Weather Intel** | Live MET Malaysia data with PAGI/PETANG/MALAM forecast segments |
+| **Active Intel** | Real-time threat alert with agent-assessed urgency level |
+| **Quick Actions** | One-click: Call 999 🔴, Share Location 🔵, Copy SMS Alert 🟡, Download Advisory .txt |
+| **Readiness Score Trend** | Sparkline chart tracking readiness score across sessions (persisted in `localStorage`) |
+| **P.A.C.E. Strategy** | AI-generated four-tier comms plan (Primary / Alternate / Contingency / Emergency) |
+| **Activity Network** | Accordion log of every agent run with full reasoning chain |
 
 ---
 
@@ -212,6 +259,8 @@ Toggle **Live Demo Mode** in the dashboard to simulate a critical flash flood sc
 - **Frontend degradation**: Failed API calls retain last known state and log a warning
 - **No-guess policy**: Watcher returns `null` for unknown impact times instead of fabricating data
 - **Change detection**: Alert hash comparison prevents redundant agent runs
+- **SMS graceful skip**: Twilio dispatch skipped cleanly when credentials are absent
+- **Geolocation fallback**: Location denied → error bar shown, map still functional without user dot
 
 ---
 
@@ -221,4 +270,4 @@ Built for the **Overclock AI Hackathon 2026** — *Agentic AI Track*
 
 ---
 
-*Stay prepared. MyResilience is always watching.*
+*Stay prepared. MyResilience is always watching.* 🛡️

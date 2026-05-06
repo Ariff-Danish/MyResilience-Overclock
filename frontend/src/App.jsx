@@ -3,6 +3,15 @@ import { Activity, ShieldAlert, PackageSearch, Users, Radar, AlertTriangle, Shie
 import { Radar as RechartsRadar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip } from 'recharts'
 import './App.css'
 
+// Haversine great-circle distance (km)
+const haversineKm = (lat1, lng1, lat2, lng2) => {
+  const R = 6371
+  const dLat = (lat2 - lat1) * Math.PI / 180
+  const dLng = (lng2 - lng1) * Math.PI / 180
+  const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a))
+}
+
 function App() {
   const [activeTab, setActiveTab] = useState('dashboard')
   const [demoMode, setDemoMode] = useState(false)
@@ -56,6 +65,13 @@ function App() {
   const [expandedShelter, setExpandedShelter] = useState(null)
   // B3 — Copy SMS feedback
   const [smsCopied, setSmsCopied] = useState(false)
+  // Geolocation
+  const [userLocation, setUserLocation] = useState(null)
+  const [locationLoading, setLocationLoading] = useState(false)
+  const [locationError, setLocationError] = useState(null)
+  // Distant alerts (threats in other regions, not affecting user)
+  const [distantAlerts, setDistantAlerts] = useState([])
+  const [userRegionDisplay, setUserRegionDisplay] = useState(null)
   
   // Grouped Activity Log
   const [activityEvents, setActivityEvents] = useState([
@@ -175,9 +191,10 @@ function App() {
         body: JSON.stringify({
           disaster_type: disasterType,
           severity: severity,
-          location: 'Petaling Jaya, Malaysia',
+          location: userRegionDisplay || 'Petaling Jaya, Malaysia',
           team: team,
-          send_sms_alerts: sendSms
+          send_sms_alerts: sendSms,
+          ...(userLocation ? { user_lat: userLocation.lat, user_lng: userLocation.lng } : {})
         })
       })
       if (res.ok) {
@@ -207,24 +224,33 @@ function App() {
   useEffect(() => {
     const pollWeather = async (isDaily = false) => {
       try {
-        const res = await fetch(`http://localhost:8000/api/weather/live?demo=${demoMode}`)
+        const locParams = userLocation
+          ? `&user_lat=${userLocation.lat}&user_lng=${userLocation.lng}`
+          : ''
+        const res = await fetch(`http://localhost:8000/api/weather/live?demo=${demoMode}${locParams}`)
         if (res.ok) {
           const data = await res.json()
           setLiveWeather(data)
           setWeatherSyncTime(new Date().toLocaleTimeString('en-MY', { hour: '2-digit', minute: '2-digit' }))
-          
+          // Store distant alerts and user region from backend response
+          if (data.distant_alerts) setDistantAlerts(data.distant_alerts)
+          if (data.user_location?.display) setUserRegionDisplay(data.user_location.display)
+
           const alertString = JSON.stringify(data.alerts)
-          
-          // Only trigger agents if alerts have changed OR if it's a manual demo toggle
+
+          // Only trigger agents if nearby alerts changed, or demo toggle
           if (alertString !== lastAlertHash || demoMode) {
             setLastAlertHash(alertString)
             if (data.alerts && data.alerts.length > 0) {
               triggerLiveAlert(data.alerts[0].type, data.alerts[0].description)
             } else {
-              logEvent('Weather Status Update', 'System Sync', ['Watcher'], 'Conditions nominal. No active warnings detected.', 'info')
+              const distantNote = data.distant_alerts?.length > 0
+                ? ` ${data.distant_alerts.length} warning(s) detected in other regions — not affecting your area.`
+                : ''
+              logEvent('Weather Status Update', 'System Sync', ['Watcher'], `Conditions nominal for your area. No nearby warnings detected.${distantNote}`, 'info')
             }
           } else if (isDaily) {
-            logEvent('Daily Forecast Sync', 'Scheduled Task', ['Watcher'], 'Daily check completed. No new threats identified.', 'info')
+            logEvent('Daily Forecast Sync', 'Scheduled Task', ['Watcher'], 'Daily check completed. No new nearby threats identified.', 'info')
           }
         }
       } catch (err) {
@@ -245,7 +271,8 @@ function App() {
       clearInterval(warningInterval)
       clearInterval(dailyInterval)
     }
-  }, [demoMode, lastAlertHash, inventory, team])
+  }, [demoMode, lastAlertHash, inventory, team, userLocation])
+
 
   // --- LEAFLET MAP LIFECYCLE ---
   useEffect(() => {
@@ -268,7 +295,10 @@ function App() {
       const L = window.L
       if (!L) { console.error('Leaflet not loaded'); return }
 
-      const map = L.map('leaflet-threat-map', { zoomControl: true }).setView([3.1073, 101.6297], 13)
+      // Center on user location if known, otherwise PJ
+      const mapCenter = userLocation ? [userLocation.lat, userLocation.lng] : [3.1073, 101.6297]
+      const mapZoom = userLocation ? 13 : 13
+      const map = L.map('leaflet-threat-map', { zoomControl: true }).setView(mapCenter, mapZoom)
       leafletInstanceRef.current = map
 
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -276,10 +306,9 @@ function App() {
         maxZoom: 18
       }).addTo(map)
 
-      // Force correct size after container paint
       setTimeout(() => {
         map.invalidateSize()
-        map.setView([3.1073, 101.6297], 13)
+        map.setView(mapCenter, mapZoom)
       }, 300)
 
       const makeIcon = (emoji) => L.divIcon({
@@ -302,16 +331,52 @@ function App() {
           .addTo(map)
           .bindPopup(`<b style="color:#2563eb">${emoji} ${agency.type?.toUpperCase()}</b><br><b>${agency.name}</b><br><span style="color:#6b7280;font-size:12px">${agency.address}</span>`)
       })
+
+      // 📍 User location marker + nearest-shelter polyline
+      if (userLocation) {
+        const uIcon = L.divIcon({
+          html: `<div class="user-loc-dot"><div class="user-loc-ring"></div></div>`,
+          className: '',
+          iconSize: [16, 16],
+          iconAnchor: [8, 8]
+        })
+        L.marker([userLocation.lat, userLocation.lng], { icon: uIcon, zIndexOffset: 1000 })
+          .addTo(map)
+          .bindPopup(`<b style="color:#3b82f6">📍 Your Location</b><br><span style="color:#8b949e;font-size:11px">${userLocation.lat.toFixed(5)}, ${userLocation.lng.toFixed(5)}</span>`)
+          .openPopup()
+
+        // Find nearest among shelters + agencies
+        const allLocs = [...(evacAdvisory.shelter_locations || []), ...(evacAdvisory.enforcement_agencies || [])]
+        let nearest = null, minDist = Infinity
+        allLocs.forEach(loc => {
+          const d = haversineKm(userLocation.lat, userLocation.lng, loc.lat, loc.lng)
+          if (d < minDist) { minDist = d; nearest = loc }
+        })
+        if (nearest) {
+          L.polyline([[userLocation.lat, userLocation.lng], [nearest.lat, nearest.lng]], {
+            color: '#84cc16', weight: 2.5, dashArray: '8,5', opacity: 0.85
+          }).addTo(map)
+            .bindTooltip(`→ ${nearest.name} · ${minDist.toFixed(2)} km`, { sticky: true, className: 'leaflet-route-tip' })
+        }
+        // Fit view to include user + PJ center
+        const bounds = L.latLngBounds([[userLocation.lat, userLocation.lng], [3.1073, 101.6297]])
+        map.fitBounds(bounds, { padding: [50, 50], maxZoom: 14 })
+      }
     }, 250)
 
     return () => clearTimeout(timer)
-  }, [activeTab, evacAdvisory])
+  }, [activeTab, evacAdvisory, userLocation])
 
   const triggerLiveAlert = async (alertType, desc) => {
     try {
+      const body = {
+        inventory, team,
+        location: userRegionDisplay || 'Kuala Lumpur, Malaysia',
+        ...(userLocation ? { user_lat: userLocation.lat, user_lng: userLocation.lng } : {})
+      }
       const res = await fetch(`http://localhost:8000/api/evaluate_risk?demo=${demoMode}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ inventory, team, location: 'Kuala Lumpur, Malaysia' })
+        body: JSON.stringify(body)
       })
       if (res.ok) {
         const data = await res.json()
@@ -441,7 +506,17 @@ function App() {
     ]
   }
 
-  // B3 — Quick Actions helpers
+  const handleLocateMe = () => {
+    if (!navigator.geolocation) { setLocationError('Geolocation not supported.'); return }
+    setLocationLoading(true)
+    setLocationError(null)
+    navigator.geolocation.getCurrentPosition(
+      pos => { setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude }); setLocationLoading(false) },
+      () => { setLocationError('Location access denied. Please allow it in your browser.'); setLocationLoading(false) },
+      { enableHighAccuracy: true, timeout: 10000 }
+    )
+  }
+
   const handleCopySms = () => {
     if (evacAdvisory?.sms_alert_text) {
       navigator.clipboard.writeText(evacAdvisory.sms_alert_text)
@@ -534,24 +609,54 @@ function App() {
             <div style={{display:'flex', alignItems:'center', gap:'0.5rem'}}>
               <AlertTriangle className="icon-sm text-yellow" /> Active Intel
             </div>
-            {liveWeather && <span className="text-muted" style={{fontSize:'0.8rem', fontWeight:'normal'}}>{liveWeather.location}</span>}
+            <span className="text-muted" style={{fontSize:'0.8rem', fontWeight:'normal'}}>
+              {userRegionDisplay || liveWeather?.location || 'Detecting location...'}
+            </span>
           </h3>
+
+          {/* Nearby threat alert */}
           {liveWeather && liveWeather.alerts.length > 0 ? (
             <div className="alert-box critical">
               <h4>🚨 {liveWeather.alerts[0].type.toUpperCase()}</h4>
               <p>{liveWeather.alerts[0].description}</p>
+              {liveWeather.alerts[0].proximity_km != null && (
+                <span className="proximity-tag nearby">⚠️ {liveWeather.alerts[0].proximity_km} km from you</span>
+              )}
             </div>
           ) : (
             <div className="alert-box safe">
               <ShieldCheck className="icon-lg text-green" />
-              <h4>No Active Threats</h4>
-              <p>Daily MET Forecast: Regional sensors report nominal conditions.</p>
+              <h4>Your Area is Safe</h4>
+              <p>
+                {userLocation
+                  ? `No active threats detected within 150 km of your location.`
+                  : 'Enable location for personalised threat detection.'}
+              </p>
             </div>
           )}
-          
+
+          {/* Distant alerts notice */}
+          {distantAlerts.length > 0 && (
+            <div className="distant-alerts-notice">
+              <span className="distant-label">🌐 Warnings in other regions ({distantAlerts.length})</span>
+              {distantAlerts.slice(0, 2).map((a, i) => (
+                <div key={i} className="distant-alert-item">
+                  <span className="distant-alert-type">{a.type.replace('OFFICIAL WARNING: ', '').replace('Forecast: ', '')}</span>
+                  {a.proximity_km && <span className="proximity-tag distant">{a.proximity_km} km away</span>}
+                </div>
+              ))}
+              {distantAlerts.length > 2 && (
+                <span className="text-muted" style={{fontSize:'0.75rem'}}>+{distantAlerts.length - 2} more — not affecting your area</span>
+              )}
+            </div>
+          )}
+
           {recentAlert && (
             <div className="recent-alert-actions mt-4">
               <h4>Agent Protocol: {recentAlert.action_taken.toUpperCase()}</h4>
+              {recentAlert.user_location && (
+                <p className="text-muted" style={{fontSize:'0.8rem'}}>📍 Assessed for: {recentAlert.user_location}</p>
+              )}
               {recentAlert.action_taken === 'email_sent' && (
                 <div className="email-preview">
                   <p><strong>Comms sent to:</strong> {recentAlert.contacts_notified.join(', ')}</p>
@@ -921,15 +1026,22 @@ function App() {
     'nadma':   { capacity: 'N/A', contact: '1800-88-2000', authority: 'NADMA / JKM' },
   }
 
-  const renderShelterCards = (locations, title, emoji) => (
+  const renderShelterCards = (locations, title, emoji) => {
+    const withDist = (locations || []).map(loc => ({
+      ...loc,
+      _dist: userLocation ? haversineKm(userLocation.lat, userLocation.lng, loc.lat, loc.lng) : null
+    }))
+    if (userLocation) withDist.sort((a, b) => a._dist - b._dist)
+    return (
     <div className="panel shelter-cards-panel">
       <h4>{emoji} {title}</h4>
       <div className="shelter-cards-list">
-        {locations?.map((loc, i) => {
+        {withDist.map((loc, i) => {
           const isOpen = expandedShelter === `${title}-${i}`
           const info = SHELTER_CONTACTS[loc.type] || {}
+          const isNearest = userLocation && i === 0
           return (
-            <div key={i} className={`shelter-card type-${loc.type}`}>
+            <div key={i} className={`shelter-card type-${loc.type}${isNearest ? ' nearest' : ''}`}>
               <div className="shelter-card-header" onClick={() => setExpandedShelter(isOpen ? null : `${title}-${i}`)}
               >
                 <div className="shelter-card-title">
@@ -937,11 +1049,17 @@ function App() {
                     {loc.type === 'shelter' ? '🏠' : loc.type === 'police' ? '🚔' : loc.type === 'fire' ? '🚒' : loc.type === 'hospital' ? '🏥' : '🏛️'}
                   </span>
                   <div>
-                    <div className="shelter-name">{loc.name}</div>
+                    <div className="shelter-name">
+                      {loc.name}
+                      {isNearest && <span className="nearest-badge">🏆 NEAREST</span>}
+                    </div>
                     <div className="shelter-address text-muted">{loc.address}</div>
                   </div>
                 </div>
-                {isOpen ? <ChevronUp size={16} className="text-muted" /> : <ChevronDown size={16} className="text-muted" />}
+                <div style={{display:'flex',alignItems:'center',gap:'0.5rem'}}>
+                  {loc._dist !== null && <span className="distance-badge">{loc._dist.toFixed(2)} km</span>}
+                  {isOpen ? <ChevronUp size={16} className="text-muted" /> : <ChevronDown size={16} className="text-muted" />}
+                </div>
               </div>
               {isOpen && (
                 <div className="shelter-card-details">
@@ -976,7 +1094,7 @@ function App() {
         })}
       </div>
     </div>
-  )
+  )}
 
   const renderThreatMap = () => (
     <div className="tab-pane animate-fade-in">
@@ -1015,8 +1133,29 @@ function App() {
               📱 Send SMS Alerts
             </button>
           )}
+          <button
+            className={`btn-locate ${userLocation ? 'located' : ''}`}
+            onClick={handleLocateMe}
+            disabled={locationLoading}
+          >
+            {locationLoading ? '⟳ Locating...' : userLocation ? '📍 Located' : '📍 Locate Me'}
+          </button>
         </div>
       </div>
+      {locationError && (
+        <div className="location-error-bar">⚠️ {locationError}</div>
+      )}
+      {userLocation && (
+        <div className="location-info-bar">
+          📍 Your position: <strong>{userLocation.lat.toFixed(5)}, {userLocation.lng.toFixed(5)}</strong>
+          {evacAdvisory && (() => {
+            const allLocs = [...(evacAdvisory.shelter_locations||[]), ...(evacAdvisory.enforcement_agencies||[])]
+            let nearest = null, minDist = Infinity
+            allLocs.forEach(loc => { const d = haversineKm(userLocation.lat, userLocation.lng, loc.lat, loc.lng); if (d < minDist) { minDist = d; nearest = loc } })
+            return nearest ? <span className="nearest-summary"> · 🏆 Nearest: <strong>{nearest.name}</strong> ({minDist.toFixed(2)} km)</span> : null
+          })()}
+        </div>
+      )}
 
       {!evacAdvisory && !evacLoading && (
         <div className="panel evac-empty-state">
