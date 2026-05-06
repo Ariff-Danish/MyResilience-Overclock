@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Activity, ShieldAlert, PackageSearch, Users, Radar, AlertTriangle, ShieldCheck, ChevronDown, ChevronRight, Filter, Menu, ChevronLeft, Map, Phone, Copy, Navigation, FileDown, ChevronUp, Edit2, X, Settings } from 'lucide-react'
+import { Activity, ShieldAlert, PackageSearch, Users, Radar, AlertTriangle, ShieldCheck, ChevronDown, ChevronRight, Filter, Menu, ChevronLeft, Map, Phone, Copy, Navigation, FileDown, ChevronUp, Edit2, X, Settings, BookOpen } from 'lucide-react'
 import { Radar as RechartsRadar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip } from 'recharts'
 import './App.css'
 
@@ -67,6 +67,7 @@ function App() {
 
   // AI Results
   const [inventoryAnalysis, setInventoryAnalysis] = useState(null)
+  const [analysisLoading, setAnalysisLoading] = useState(true) // true on first load
   const [pacePlan, setPacePlan] = useState(null)
   const [recentAlert, setRecentAlert] = useState(null)
   const [liveWeather, setLiveWeather] = useState(null)
@@ -86,6 +87,7 @@ function App() {
   // B3 — Copy SMS feedback
   const [smsCopied, setSmsCopied] = useState(false)
   // Geolocation
+  const [activeSgDisaster, setActiveSgDisaster] = useState('flood')
   const [userLocation, setUserLocation] = useState(null)
   const [locationLoading, setLocationLoading] = useState(false)
   const [locationError, setLocationError] = useState(null)
@@ -113,6 +115,22 @@ function App() {
   // Live clock
   const [liveTime, setLiveTime] = useState(new Date())
   useEffect(() => { const t = setInterval(() => setLiveTime(new Date()), 1000); return () => clearInterval(t) }, [])
+
+  // Backend health monitoring
+  const [backendOnline, setBackendOnline] = useState(true)
+  useEffect(() => {
+    const checkHealth = async () => {
+      try {
+        const r = await fetch(`${API_URL}/health`, { signal: AbortSignal.timeout(5000) })
+        setBackendOnline(r.ok)
+      } catch {
+        setBackendOnline(false)
+      }
+    }
+    checkHealth()
+    const healthInterval = setInterval(checkHealth, 30000)
+    return () => clearInterval(healthInterval)
+  }, [])
 
   // Grouped Activity Log
   const [activityEvents, setActivityEvents] = useState([
@@ -156,6 +174,7 @@ function App() {
     // Single Groq call: analyze_inventory returns both inventory audit AND pace plan
     // This eliminates the duplicate token burn from calling generate_pace separately
     const location = userRegionDisplay || 'Malaysia'
+    setAnalysisLoading(true)
     try {
       const invRes = await fetch(`${API_URL}/api/analyze_inventory`, {
         method: 'POST',
@@ -212,6 +231,8 @@ function App() {
       )
     } catch (err) {
       logEvent('Agent Unreachable', 'Auto Analysis Trigger', ['System'], `Could not connect to backend: ${err.message}.`, 'error')
+    } finally {
+      setAnalysisLoading(false)
     }
   }
 
@@ -746,6 +767,35 @@ function App() {
         </div>
       </div>
 
+      {/* ── Offline Banner ── */}
+      {!backendOnline && (
+        <div style={{
+          background: 'rgba(244,63,94,0.12)', border: '1px solid rgba(244,63,94,0.35)',
+          borderRadius: '8px', padding: '0.6rem 1rem', marginBottom: '1rem',
+          display: 'flex', alignItems: 'center', gap: '0.75rem', fontSize: '0.83rem',
+          color: '#fca5a5', animation: 'fadeIn 0.3s ease'
+        }}>
+          <span style={{ fontSize: '1rem' }}>⚠️</span>
+          <span><strong>AI Backend Offline</strong> — Local data shown. Some features may be limited. Retrying every 30s.</span>
+          <button onClick={() => fetch(`${API_URL}/health`).then(r => setBackendOnline(r.ok)).catch(() => setBackendOnline(false))}
+            style={{ marginLeft: 'auto', background: 'rgba(244,63,94,0.2)', border: '1px solid rgba(244,63,94,0.4)', color: '#fca5a5', borderRadius: '6px', padding: '0.25rem 0.65rem', cursor: 'pointer', fontSize: '0.75rem', fontWeight: '700' }}>
+            Retry ↺
+          </button>
+        </div>
+      )}
+
+      {/* ── Analysis Loading Banner (first load only) ── */}
+      {analysisLoading && !inventoryAnalysis && (
+        <div style={{
+          background: 'rgba(34,197,94,0.06)', border: '1px solid rgba(34,197,94,0.2)',
+          borderRadius: '8px', padding: '0.6rem 1rem', marginBottom: '1rem',
+          display: 'flex', alignItems: 'center', gap: '0.75rem', fontSize: '0.83rem', color: 'var(--primary)'
+        }}>
+          <span className="pulse-dot" style={{ width: '8px', height: '8px', background: 'var(--primary)', borderRadius: '50%', flexShrink: 0 }} />
+          <span>AI Assessor initialising — calculating readiness scores and P.A.C.E plan...</span>
+        </div>
+      )}
+
       <div className="dashboard-grid">
         <div className="panel radar-panel">
           <h3><Radar className="icon-sm" /> Asset Readiness</h3>
@@ -908,10 +958,10 @@ function App() {
                   ))}
                 </div>
               )}
-              {inventoryAnalysis.expiring_items?.length > 0 && (
+              {inventoryAnalysis.expiring_soon_items?.length > 0 && (
                 <div className="gaps-row" style={{ marginTop: '0.4rem' }}>
                   <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: 'var(--warning)' }}>⏳ EXPIRING:</span>
-                  {inventoryAnalysis.expiring_items.slice(0, 3).map(item => (
+                  {inventoryAnalysis.expiring_soon_items.slice(0, 3).map(item => (
                     <span key={item} className="gap-tag clickable-tag"
                       style={{ borderColor: 'rgba(234,179,8,0.4)', color: '#facc15' }}
                       title="Click to filter expiring items"
@@ -1651,6 +1701,214 @@ function App() {
     </div>
   )
 
+  const renderSurvivalGuide = () => {
+    const DISASTERS = [
+      { id:'flood', emoji:'🌊', name:'Banjir (Flood)', color:'#38bdf8', freq:'HIGHEST RISK',
+        zones:'Kelantan, Terengganu, Johor, Pahang, Sarawak, Kedah, Perak',
+        desc:'Annual monsoon floods strike Nov–Mar (East Coast) and Apr–May (West Coast). Flash floods can hit urban areas within minutes year-round.',
+        signs:['Water rising fast in rivers or drains','Heavy rain lasting more than 30 minutes','JPS/NADMA/PDRM official warning on radio or SMS','Unusual rushing water sounds from drains','Sewage or earth smell from drainage systems'],
+        steps:['STOP what you are doing — assess water level immediately','Move to the HIGHEST FLOOR of your building NOW — do not wait','Switch OFF electricity at the main switch (MCB panel / fuse box)','Grab your Emergency Bag: 3 days of water + food, medicine, documents, power bank, torch','Call 999 or 991 (Bomba) if water is entering building quickly','Text your GPS coordinates + nearest landmark to family and contacts','NEVER walk through floodwater — 15cm of moving water can knock an adult down','If swept into water: float on BACK, legs downstream, feet first, steer toward shore','Use STAIRS only — never the lift during flood or emergency','Signal for rescue: wave bright cloth or torch light from window or rooftop'],
+        dont:['Do NOT drive through flooded roads — most flood deaths happen this way','Do NOT touch any electrical equipment near or in water','Do NOT eat food that has been in contact with floodwater — it carries disease','Do NOT return home until NADMA or PDRM declares official all-clear'],
+        after:['Wait for official all-clear before entering home','Wear rubber gloves and boots — floodwater carries leptospirosis, cholera, E.coli','Photograph ALL damage before cleaning for insurance claim','Boil all drinking water for at least 5 minutes','Inspect walls and floors for structural cracks before sleeping inside','Report damage and missing persons to nearest police station'] },
+      { id:'flashflood', emoji:'⚡', name:'Banjir Kilat (Flash Flood)', color:'#818cf8', freq:'HIGH RISK — Urban',
+        zones:'KL, Petaling Jaya, Penang, Johor Bahru, Kuching, Kota Kinabalu, Shah Alam',
+        desc:'Flash floods occur within 5 minutes of heavy rain in urban areas. Can happen even if it is not raining above you — water rushes from upstream hills.',
+        signs:['Water rising more than 10cm in under 5 minutes','Loud rushing water sound from nearby drains or streams','Drains suddenly overflowing with force','Cars stalling or stopping ahead on low-lying roads','Rain visible on surrounding hills even when it is dry above you'],
+        steps:['MOVE IMMEDIATELY to higher ground — you have 3 to 5 minutes maximum','Leave your car if water reaches the door panel — your life is worth more','If trapped in car: unlock doors + wind windows down before water reaches chest','Find any concrete building and go to the SECOND FLOOR or ROOFTOP','If swept into current: float on back, legs downstream, grab fixed objects like poles or trees','Blow a whistle 3 times repeatedly — or shout HELP in sets of 3 sharp calls','Wave your phone torch or any bright reflective object for rescue crews','Stay elevated until water has fully receded — wait at least 2 hours after rain stops'],
+        dont:['Do NOT assume ankle-deep water is safe to walk through','Do NOT stay in underpasses, tunnels, or car parks at ground level','Do NOT stop to collect belongings — evacuate with only yourself'],
+        after:['Avoid rivers and drains for 24 hours after rain stops — they can surge again','Check for snakes and reptiles hiding in flood debris before touching anything','Clean all skin cuts and wounds immediately — flash flood water is contaminated','Report missing persons to police within 24 hours'] },
+      { id:'landslide', emoji:'⛰️', name:'Tanah Runtuh (Landslide)', color:'#f59e0b', freq:'HIGH RISK — Highland',
+        zones:'Cameron Highlands, Genting, Ampang (KL), Fraser Hill, Sabah highlands, Sarawak interior',
+        desc:'Triggered by heavy prolonged rain on steep slopes, deforestation, or earthquakes. Can happen with almost no warning. Second slides are common within hours.',
+        signs:['Cracking or deep rumbling sounds from hillside','Trees or structures on slope tilting or leaning','Sudden increase in muddy brown water from streams','Unusual earth smell or gas odour from ground','Small rockslides or soil movements on slope above you','Cracks appearing in roads, walls, or ground near a slope'],
+        steps:['EVACUATE IMMEDIATELY — do not stop to collect belongings','Run PERPENDICULAR to the slide direction — never run downhill in the slide path','Get to high, flat, stable ground far away from the slope','If inside a building near slope: take cover under the sturdiest table or desk available','If caught in debris flow: protect your HEAD with both arms, try to roll to the side','Call 994 (Bomba) or 999 immediately once you reach safety','Alert all neighbours by shouting, knocking on doors, or sounding your car horn repeatedly','Do NOT re-enter the area — a second landslide is likely within hours','Mark your last known position clearly for rescue teams searching the area'],
+        dont:['Do NOT use roads below the slide path — more debris may fall','Do NOT attempt to rescue trapped persons without professional equipment','Do NOT stay near the slope even after the initial slide has stopped'],
+        after:['Stay at least 300 metres from the affected slope for 72 hours minimum','Report any trapped persons to Bomba: 994','Do NOT turn on gas supply — inspect for leaks first','Only return after a structural engineer and JKR have cleared the area'] },
+      { id:'storm', emoji:'⛈️', name:'Ribut Petir (Thunderstorm)', color:'#a78bfa', freq:'VERY COMMON — Year Round',
+        zones:'All states — most severe on West Coast Peninsular Mar–Apr and Oct–Nov',
+        desc:'Malaysia averages 200+ thunderstorm days per year. Lightning is a leading outdoor killer. Storms can bring winds of 80–100 km/h with little warning.',
+        signs:['Dark cumulonimbus clouds building tall and fast','Sudden sharp drop in temperature before the storm','Hair standing on end (lightning is about to strike nearby)','Distant thunder rumbling growing closer quickly','Strong gusty winds before heavy rain arrives','Birds and animals going quiet suddenly'],
+        steps:['Get INSIDE a solid building or hard-top vehicle immediately','Stay away from all windows, open doors, and metal objects','Unplug all electrical appliances and the TV antenna','Avoid using running water or plumbing during an active storm','If caught outdoors: crouch low on the balls of your feet, feet together, head down — do NOT lie flat','NEVER shelter under trees — trees attract and conduct lightning directly to you','If driving: stay inside the car, avoid touching metal, pull over away from trees and signs','Wait 30 full minutes after the last thunder before going outdoors','If someone is struck by lightning: call 999 immediately, start CPR — they are NOT electrified'],
+        dont:['Do NOT stand under trees, near tall poles, or near water bodies','Do NOT use your mobile phone outdoors during active lightning','Do NOT lie flat on the ground — crouch low on your feet instead','Do NOT stand in an open field, on a hilltop, or near a metal fence'],
+        after:['Check all electrical systems before restoring power at the MCB','Inspect roof and ceiling for water damage or structural harm','Clear fallen branches before using driveway or parking area','Report downed power lines to TNB immediately: 15454 — never touch them'] },
+      { id:'haze', emoji:'🌫️', name:'Jerebu (Haze)', color:'#94a3b8', freq:'SEASONAL — Jul–Oct',
+        zones:'Worst in Sarawak, Peninsular west coast, Klang Valley, Selangor, Negeri Sembilan',
+        desc:'Caused by forest and peat fires in Malaysia and Indonesia. API above 300 is hazardous to all persons. Can persist for days or weeks without improvement.',
+        signs:['API reading above 100 on APIMS or official app','Visible grey or brown smoky haze reducing visibility','Persistent burning smell in the air outdoors','Eye irritation, coughing, or throat discomfort without illness','Sun appearing unusually orange or dark red at any time','DOE Malaysia haze alert issued via media or MySejahtera'],
+        steps:['Check API at APIMS website or MySejahtera app before any outdoor activity','STAY INDOORS — keep all doors and windows closed tightly','Wear an N95 or FFP2 mask when going outside — surgical masks do NOT protect against haze particles','Keep all air conditioners running with windows fully closed','Drink at least 3 litres of water per day to support lung function','Move children under 12, elderly above 60, pregnant women, and asthma patients indoors FIRST','Run a wet towel or cloth under door gaps to block haze from entering','If asthmatic: keep your rescue inhaler in your pocket at all times, not in your bag','Cancel all outdoor sports, exercise, and events if API exceeds 200'],
+        dont:['Do NOT exercise or do any physical activity outdoors when API is above 100','Do NOT use cloth handkerchiefs as masks — they provide zero protection from fine particles','Do NOT burn rubbish, leaves, or waste during haze period — it makes it worse','Do NOT open windows thinking fresh air will help — outdoor air is more toxic than indoor air during haze'],
+        after:['Once API drops below 100: ventilate your home gradually over several hours','Replace all air-conditioning filters after a prolonged haze event','See a doctor if you have persistent cough, breathlessness, or chest tightness','Children and elderly should rest indoors for 24 hours after haze clears before resuming normal activity'] },
+      { id:'earthquake', emoji:'🌏', name:'Gempa Bumi (Earthquake)', color:'#f43f5e', freq:'MODERATE RISK — East Malaysia',
+        zones:'Sabah (highest risk in Malaysia), Sarawak, tremors felt in Peninsular from Sumatran megaquakes',
+        desc:'The 2015 Ranau, Sabah earthquake (Magnitude 6.0) killed 18 people. Peninsular Malaysia regularly feels tremors from Sumatran fault events. Coastal quakes carry tsunami risk.',
+        signs:['Sudden deep rumbling sound from beneath the ground','Ground shaking or vibrating beneath your feet','Objects falling, swaying, or sliding without wind','Animals behaving erratically before or during shaking','Water in pools or containers sloshing without cause'],
+        steps:['DROP immediately — get down on your hands and knees so the quake cannot knock you down','Take COVER under a sturdy table, desk, or next to an interior wall — cover your HEAD and NECK with both arms','HOLD ON to the table and be prepared to move with it until shaking fully stops','If no table: get against an interior wall away from windows, against a low piece of furniture','If in bed: stay in bed, pull your pillow firmly over your head','If driving: pull over away from bridges, overpasses, and buildings — stay inside the vehicle','If outdoors: move to open area away from all buildings, trees, and power lines — crouch low','AFTER shaking stops: check yourself and others for injury, check for gas leak smell, and exit building','Use stairs only — inspect each step for cracks before placing weight on it','Move to open ground and expect aftershocks — they can occur within minutes to days','If near the coast and you felt a strong quake: move INLAND immediately without waiting for a warning siren'],
+        dont:['Do NOT run outside during the shaking — most injuries come from falling objects in doorways or outside','Do NOT stand in doorframes — this is an outdated myth — it provides no protection','Do NOT use lifts or elevators at any point during or after an earthquake','Do NOT re-enter any building until a structural engineer has inspected and cleared it'],
+        after:['Check gas, water, and electrical systems carefully for damage before switching anything on','Tune to RTM Radio 1 (91.5 FM) on a battery radio for all official updates','Report structural damage to Jabatan Kerja Raya (JKR)','If near coast: wait for the official JMM tsunami all-clear before returning to shoreline'] },
+      { id:'tsunami', emoji:'🌊', name:'Tsunami', color:'#0ea5e9', freq:'LOW BUT DEADLY — Coastal',
+        zones:'Penang, Kedah, Perlis (Indian Ocean coast), Sabah east coast, Sarawak coast, Terengganu',
+        desc:'The 2004 Indian Ocean Tsunami killed 68 people in Malaysia. Risk exists for all Indian Ocean-facing and Sabah east coasts. Warning time can be as short as 15 minutes.',
+        signs:['A strong earthquake near or under the sea (you will feel it)','Ocean water suddenly receding rapidly — beach exposed far beyond normal','Loud continuous roaring noise from ocean direction like a freight train','Official tsunami warning sirens or JMM alert on radio','Unusual chaotic wave patterns at the shoreline with no wind'],
+        steps:['If you FEEL a strong earthquake near the coast: DO NOT WAIT for a siren — RUN INLAND NOW','If you SEE the ocean suddenly pulling back: you have 5 to 10 minutes — RUN to high ground immediately','Get to HIGH GROUND — minimum 30 metres above sea level or 3 kilometres inland from shore','Abandon your car if traffic blocks the road — run on foot, it is faster in gridlock','If no hills nearby: go to the highest floor of the tallest concrete building available','Do NOT go to the beach to watch or take photos — the first wave is never the largest','Stay at your elevated position until NADMA or JMM issues the official all-clear — this may take 12+ hours','Help elderly people and children near you move — knock on doors, shout, sound your horn','Take NOTHING except your medication, phone, and identity documents — speed is everything'],
+        dont:['Do NOT wait to see the wave approaching — if you see it, it is already too late to outrun it','Do NOT return to the shore between waves — multiple large waves can come hours apart','Do NOT think you can outswim or dive under a tsunami — this is impossible','Do NOT cross any bridge or low-lying road near the coast during or after a tsunami warning'],
+        after:['Wait for the official NADMA all-clear — multiple waves can arrive over 12 to 24 hours','Avoid all coastal floodwater — contains sewage, industrial chemicals, sharp debris, and live electricity','Do NOT eat seafood caught near the affected coast for at least 30 days after the event','NADMA Hotline: 1800-88-2000 | Marine Department: 03-2691 4244'] },
+      { id:'fire', emoji:'🔥', name:'Kebakaran (Fire)', color:'#f97316', freq:'COMMON — All States',
+        zones:'Urban residential, industrial zones, oil palm estates, dry forest areas',
+        desc:'Building fires, LPG gas leaks, and electrical faults are the most common causes. Most deadly between 2am and 5am when people are asleep. Smoke kills 3x faster than flames.',
+        signs:['Smell of burning, smoke, or melting plastic','Fire alarm or smoke detector activating','Visible smoke coming from under a closed door','Crackling or popping sounds from walls, ceiling, or wiring','Unusual heat felt through a floor, wall, or door surface'],
+        steps:['SOUND THE ALARM immediately — shout FIRE loudly to alert every person in the building','Call 994 (Bomba) or 999 — give your building address and floor clearly','Touch any closed door with the BACK of your hand before opening — if it is hot, do NOT open it','CRAWL on hands and knees to stay below smoke — breathable air is within 30cm of the floor','Cover your nose and mouth with a wet cloth or clothing while moving','Exit via STAIRS — NEVER use a lift during any fire emergency','Close all doors behind you as you leave — each closed door slows fire spread significantly','If trapped in a room: seal the door gap with clothing or towels, and signal from the window','If your clothes catch fire: STOP — DROP to the ground — ROLL until flames are out','Once outside the building: move to the assembly point and DO NOT RE-ENTER for any reason'],
+        dont:['Do NOT try to fight a large fire with a bucket or small extinguisher — evacuate first','Do NOT pour water on cooking oil fires or electrical fires — use a fire extinguisher or smother with a lid','Do NOT delay evacuation to collect valuables — fire size doubles every 60 seconds','Do NOT open windows in a burning room — oxygen directly feeds the fire'],
+        after:['Do NOT re-enter until Bomba inspects and officially clears the structure','All gas and electrical systems must be professionally inspected before reuse','File a police report for your insurance claim within 24 hours of the fire','Call JKM for emergency shelter assistance: 03-8000-8000'] }
+    ]
+
+    const COMMS = [
+      { phase:'IMMEDIATE (0–1 hour)', color:'var(--danger)', icon:'🚨', steps:[
+        'Go to your PRE-AGREED FAMILY MEETING POINT — decide on this NOW before any disaster occurs',
+        'Use a WHISTLE — 3 short blasts means I need help. 1 long blast means I am okay',
+        'If you have walkie-talkies: switch to Channel 1 — the universal emergency frequency',
+        'Place a BRIGHT CLOTH or flag on your front door to signal "we are safe here" to rescue teams',
+        'Physically check on immediate neighbours by knocking on their doors' ]},
+      { phase:'SHORT TERM (1–24 hours)', color:'var(--warning)', icon:'⚠️', steps:[
+        'Tune to RTM Radio 1 (91.5 FM) — Malaysia Emergency Broadcast channel — requires only a battery or hand-crank radio',
+        'Write physical notes and pass them to trusted neighbours for relay toward help',
+        'Send your strongest group member to the nearest police station, fire station, or high ground with phone signal',
+        'Mark your shelter location with arrows made from rocks, sticks, or cloth for rescue teams to follow',
+        'Keep your group together — do not separate unless absolutely necessary' ]},
+      { phase:'MEDIUM TERM (1–7 days)', color:'var(--primary)', icon:'📡', steps:[
+        'Establish a fixed check-in schedule — meet at the agreed location every 6 hours',
+        'Use MIRROR or polished metal to reflect sunlight — visible up to 16km on a clear day',
+        'At night: use your torch in SOS pattern — 3 short, 3 long, 3 short flashes repeatedly',
+        'Build a SIGNAL FIRE — 3 fires in a triangle shape is the international distress signal recognised by all rescue aircraft',
+        'Pass written messages person to person until someone reaches an area with communication' ]},
+      { phase:'PHYSICAL NAVIGATION', color:'var(--violet)', icon:'🧭', steps:[
+        'In Malaysia, rivers and streams ALWAYS flow toward the coast — follow any river downstream to find civilization',
+        'The SUN rises in the East and sets in the West — use this to determine direction at any time of day',
+        'At night: find the Southern Cross constellation (5 stars in a cross shape) — it points South',
+        'Mark your path as you move: break branches, stack 3 stones, or cut arrow marks in bark so rescuers can follow',
+        'If injured or weak: STAY IN ONE PLACE — it is far easier for rescuers to find a stationary person' ]}
+    ]
+
+    const disaster = DISASTERS.find(d => d.id === activeSgDisaster) || DISASTERS[0]
+
+    return (
+      <div className="tab-pane animate-fade-in sg-container">
+        {/* Hero */}
+        <div className="sg-hero">
+          <div className="sg-hero-bg" />
+          <div className="sg-hero-content">
+            <h2 className="sg-hero-title">🛡️ FIELD SURVIVAL MANUAL</h2>
+            <p className="sg-hero-sub">Malaysia Emergency Response — Zero Knowledge Required</p>
+            <div className="sg-hero-badges">
+              <span className="sg-badge sg-badge-danger">8 Disaster Types</span>
+              <span className="sg-badge sg-badge-info">Step-by-Step Protocol</span>
+              <span className="sg-badge sg-badge-success">Works Offline</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Comms Blackout Section */}
+        <div className="sg-section">
+          <div className="sg-section-header sg-comms-header">
+            <h3>📡 COMMUNICATION BLACKOUT PROTOCOL</h3>
+            <p className="text-muted" style={{fontSize:'0.85rem',margin:0}}>What to do when phone, internet, and electricity are all gone</p>
+          </div>
+          <div className="sg-comms-grid">
+            {COMMS.map((phase, pi) => (
+              <div key={pi} className="sg-comms-card" style={{borderTopColor: phase.color}}>
+                <div className="sg-comms-phase" style={{color: phase.color}}>{phase.icon} {phase.phase}</div>
+                <ol className="sg-comms-steps">
+                  {phase.steps.map((s, si) => <li key={si}>{s}</li>)}
+                </ol>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Disaster Selector */}
+        <div className="sg-section">
+          <div className="sg-section-header">
+            <h3>🌏 MALAYSIAN DISASTER RESPONSE GUIDE</h3>
+            <p className="text-muted" style={{fontSize:'0.85rem',margin:0}}>Select a disaster type for complete step-by-step survival instructions</p>
+          </div>
+          <div className="sg-disaster-tabs">
+            {DISASTERS.map(d => (
+              <button key={d.id}
+                className={`sg-dis-tab ${activeSgDisaster === d.id ? 'active' : ''}`}
+                style={activeSgDisaster === d.id ? {borderColor: d.color, color: d.color, background: `${d.color}18`} : {}}
+                onClick={() => setActiveSgDisaster(d.id)}>
+                <span>{d.emoji}</span>
+                <span className="sg-tab-name">{d.name.split('(')[0].trim()}</span>
+                <span className="sg-tab-freq" style={{color: d.color}}>{d.freq}</span>
+              </button>
+            ))}
+          </div>
+
+          {/* Disaster Detail */}
+          <div className="sg-disaster-detail" style={{borderTopColor: disaster.color}}>
+            <div className="sg-detail-header">
+              <div>
+                <div className="sg-detail-title">{disaster.emoji} {disaster.name}</div>
+                <div className="sg-detail-zones">📍 Highest risk: {disaster.zones}</div>
+                <p className="sg-detail-desc">{disaster.desc}</p>
+              </div>
+              <span className="sg-detail-freq-badge" style={{background:`${disaster.color}22`, color:disaster.color, borderColor:`${disaster.color}44`}}>{disaster.freq}</span>
+            </div>
+
+            <div className="sg-detail-grid">
+              {/* Warning Signs */}
+              <div className="sg-card sg-card-warning">
+                <h4>⚠️ Warning Signs — Watch For These</h4>
+                <ul>{disaster.signs.map((s,i) => <li key={i}>{s}</li>)}</ul>
+              </div>
+
+              {/* Action Steps */}
+              <div className="sg-card sg-card-action">
+                <h4>✅ What To Do — Follow These Steps In Order</h4>
+                <ol>{disaster.steps.map((s,i) => <li key={i}>{s}</li>)}</ol>
+              </div>
+
+              {/* Don't */}
+              <div className="sg-card sg-card-dont">
+                <h4>🚫 Critical — What NOT To Do</h4>
+                <ul>{disaster.dont.map((s,i) => <li key={i}>{s}</li>)}</ul>
+              </div>
+
+              {/* After */}
+              <div className="sg-card sg-card-after">
+                <h4>🔄 After The Disaster — Recovery Steps</h4>
+                <ol>{disaster.after.map((s,i) => <li key={i}>{s}</li>)}</ol>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Emergency Contacts */}
+        <div className="sg-section">
+          <div className="sg-section-header">
+            <h3>📞 MALAYSIA EMERGENCY CONTACTS</h3>
+          </div>
+          <div className="sg-contacts-grid">
+            {[
+              {num:'999', label:'Police / General Emergency', color:'var(--danger)'},
+              {num:'994', label:'Bomba & Rescue (Fire)', color:'#f97316'},
+              {num:'991', label:'Medical Emergency (Ambulance)', color:'#22c55e'},
+              {num:'15454', label:'TNB (Power Outage / Downed Lines)', color:'#facc15'},
+              {num:'1800-88-2000', label:'NADMA Disaster Operations', color:'#38bdf8'},
+              {num:'03-8064 2400', label:'JPS Flood Control Room (24h)', color:'#818cf8'},
+              {num:'1-300-88-1972', label:'DOE Haze Hotline', color:'#94a3b8'},
+              {num:'03-8891 5400', label:'MET Malaysia Weather Warning', color:'#a78bfa'},
+            ].map(c => (
+              <a key={c.num} href={`tel:${c.num}`} className="sg-contact-card">
+                <div className="sg-contact-num" style={{color:c.color}}>{c.num}</div>
+                <div className="sg-contact-label">{c.label}</div>
+              </a>
+            ))}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="app-container">
       <aside className={`sidebar ${isSidebarOpen ? 'open' : 'closed'}`}>
@@ -1675,10 +1933,19 @@ function App() {
           <button className={activeTab === 'threatmap' ? 'active' : ''} onClick={() => setActiveTab('threatmap')}>
             <Map className="nav-icon" /> {isSidebarOpen && 'Threat Map'}
           </button>
+          <button className={activeTab === 'survival' ? 'active' : ''} onClick={() => setActiveTab('survival')}>
+            <BookOpen className="nav-icon" /> {isSidebarOpen && 'Survival Guide'}
+          </button>
           <button className={activeTab === 'settings' ? 'active' : ''} onClick={() => setActiveTab('settings')}>
             <Settings className="nav-icon" /> {isSidebarOpen && 'Settings'}
           </button>
         </nav>
+        {isSidebarOpen && (
+          <div className="sidebar-status">
+            <div className="sidebar-status-dot" />
+            <span>SYSTEM ONLINE</span>
+          </div>
+        )}
         <button className="sidebar-toggle-btn" onClick={() => setSidebarOpen(!isSidebarOpen)} title={isSidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}>
           {isSidebarOpen ? <ChevronLeft className="nav-icon" /> : <Menu className="nav-icon" />}
         </button>
@@ -1690,6 +1957,7 @@ function App() {
         {activeTab === 'team' && renderTeam()}
         {activeTab === 'activity' && renderActivity()}
         {activeTab === 'threatmap' && renderThreatMap()}
+        {activeTab === 'survival' && renderSurvivalGuide()}
         {activeTab === 'settings' && renderSettings()}
       </main>
     </div>

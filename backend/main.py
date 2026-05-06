@@ -2,20 +2,30 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.routers import emergency
 import os
+from datetime import datetime
 
 app = FastAPI(
-    title="MyResilience",
+    title="MyResilience — SafeSync AI",
     description="Agentic Disaster Preparedness Guardian — Malaysia's AI-native household emergency command system.",
-    version="2.0.0",
+    version="2.1.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
 )
 
-# CORS setup
+# CORS — allow production frontend + localhost dev
+ALLOWED_ORIGINS = [
+    "https://myresilience-overclock-web.vercel.app",
+    "http://localhost:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:5173",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "Accept", "Authorization"],
 )
 
 # Include the emergency router
@@ -25,8 +35,10 @@ app.include_router(emergency.router, prefix="/api", tags=["emergency"])
 async def health_check():
     return {
         "status": "operational",
-        "service": "SafeSync AI",
-        "version": "2.0.0",
+        "service": "MyResilience SafeSync AI",
+        "version": "2.1.0",
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "environment": os.getenv("VERCEL_ENV", "development"),
     }
 
 if __name__ == "__main__":
