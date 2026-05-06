@@ -155,21 +155,30 @@ async def fetch_mock_weather_data(
     if demo:
         return json.dumps({
             "location": f"{user_location_name}, Malaysia",
-            "current_conditions": {"temperature_celsius": 28, "precipitation_mm_per_hour": 150, "wind_speed_kmh": 65},
+            "current_conditions": {
+                "temperature_celsius": 34,
+                "min_temp": 27,
+                "precipitation_mm_per_hour": 150,
+                "wind_speed_kmh": 65,
+                "summary": "Hujan lebat",
+                "morning": "Hujan lebat",
+                "afternoon": "Ribut petir",
+                "night": "Hujan ringan",
+            },
             "alerts": [{
                 "type": "Red Alert",
                 "description": "Severe flash flood warning. Rivers exceeding danger levels.",
                 "estimated_onset_hours": 2.5,
                 "location": user_location_name,
-            }]
+            }],
+            "official_warnings_count": 1,
         })
     data = await fetch_met_weather(user_location_name)
     return json.dumps(data)
 
 
-router = APIRouter()
+# ── Routes ─────────────────────────────────────────────────────────────────────
 
-# ── Proximity threshold: alerts are suppressed if disaster is further than this ─
 PROXIMITY_ALERT_KM = 150.0
 
 
