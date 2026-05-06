@@ -44,18 +44,15 @@
   --cat-misc: #6b7280;
 }
 
-html { height: 100%; overflow: hidden; }
+html, body { height: 100%; margin: 0; overflow: hidden; }
 
 body {
-  height: 100%;
-  margin: 0;
   font-family: 'Inter', system-ui, sans-serif;
   background-color: var(--bg-dark);
   background-image:
     radial-gradient(ellipse 80% 50% at 20% 0%, rgba(34,197,94,0.04) 0%, transparent 60%),
     radial-gradient(ellipse 60% 40% at 80% 100%, rgba(56,189,248,0.04) 0%, transparent 60%);
   color: var(--text-main);
-  overflow: hidden;
 }
 
 /* Layout */
@@ -65,6 +62,7 @@ body {
   width: 100%;
   max-width: 100%;
   overflow: hidden;
+  min-height: 0;
 }
 
 .sidebar {
@@ -305,21 +303,22 @@ input:focus, select:focus {
 .dashboard-grid > * { min-width: 0; overflow: hidden; }
 
 /* Bento assignments */
-.radar-panel     { grid-column: span 4; }
-.alert-panel     { grid-column: span 4; }
-.weather-intel-panel { grid-column: span 4; }
-.readiness-panel { grid-column: span 12; }
-.score-trend-panel   { grid-column: span 12; }
-.quick-actions-panel { grid-column: span 12; }
-.pace-panel          { grid-column: span 12; }
-.full-width          { grid-column: span 12; }
+.radar-panel          { grid-column: span 4; }
+.alert-panel          { grid-column: span 4; }
+.tactical-intel-panel { grid-column: span 4; }
+.weather-intel-panel  { grid-column: span 4; }
+.readiness-panel      { grid-column: span 12; }
+.score-trend-panel    { grid-column: span 12; }
+.quick-actions-panel  { grid-column: span 12; }
+.pace-panel           { grid-column: span 12; }
+.full-width           { grid-column: span 12; }
 
 @media (max-width: 1100px) {
-  .radar-panel, .alert-panel, .weather-intel-panel { grid-column: span 6; }
+  .radar-panel, .alert-panel, .tactical-intel-panel, .weather-intel-panel { grid-column: span 6; }
 }
 @media (max-width: 700px) {
   .dashboard-grid { grid-template-columns: 1fr; }
-  .radar-panel, .alert-panel, .weather-intel-panel,
+  .radar-panel, .alert-panel, .tactical-intel-panel, .weather-intel-panel,
   .readiness-panel, .score-trend-panel,
   .quick-actions-panel, .pace-panel { grid-column: span 1; }
 }
@@ -699,6 +698,7 @@ input:checked + .slider:before { transform: translateX(26px); background-color: 
   overflow-x: hidden;
   padding: 1.75rem 2rem;
   min-width: 0;
+  min-height: 0;
   scrollbar-width: thin;
   scrollbar-color: rgba(34,197,94,0.2) transparent;
 }

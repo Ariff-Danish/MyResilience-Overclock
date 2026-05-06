@@ -12,6 +12,8 @@ const haversineKm = (lat1, lng1, lat2, lng2) => {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
 }
 
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+
 function App() {
   const [activeTab, setActiveTab] = useState('dashboard')
   const [demoMode, setDemoMode] = useState(true)
@@ -155,7 +157,7 @@ function App() {
     // This eliminates the duplicate token burn from calling generate_pace separately
     const location = userRegionDisplay || 'Malaysia'
     try {
-      const invRes = await fetch('http://localhost:8000/api/analyze_inventory', {
+      const invRes = await fetch(`${API_URL}/api/analyze_inventory`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ inventory, team, location, settings })
@@ -209,9 +211,16 @@ function App() {
         invRes.ok ? 'success' : 'warning'
       )
     } catch (err) {
-      logEvent('Agent Unreachable', 'Auto Analysis Trigger', ['System'], `Could not connect to backend: ${err.message}. Check that the server is running on port 8000.`, 'error')
+      logEvent('Agent Unreachable', 'Auto Analysis Trigger', ['System'], `Could not connect to backend: ${err.message}.`, 'error')
     }
   }
+
+  // --- INSTANT LOAD ON MOUNT ---
+  // Runs analysis immediately so readiness, PACE, and all panels populate on first load
+  // (the debounced effect above only fires on inventory/team *changes*)
+  useEffect(() => {
+    runAutoAnalysis()
+  }, [])
 
   // --- EVACUATION ADVISOR ---
   const runEvacuationAdvisory = async (sendSms = false) => {
@@ -223,7 +232,7 @@ function App() {
         ? selectedDisasterType
         : (recentAlert?.weather_disaster_type || 'flood')
       const severity = recentAlert?.weather_severity || 'warning'
-      const res = await fetch('http://localhost:8000/api/evacuation_advisory', {
+      const res = await fetch(`${API_URL}/api/evacuation_advisory`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -266,7 +275,7 @@ function App() {
         const locParams = userLocation
           ? `&user_lat=${userLocation.lat}&user_lng=${userLocation.lng}`
           : ''
-        const res = await fetch(`http://localhost:8000/api/weather/live?demo=${demoMode}${locParams}`)
+        const res = await fetch(`${API_URL}/api/weather/live?demo=${demoMode}${locParams}`)
         if (res.ok) {
           const data = await res.json()
           setLiveWeather(data)
@@ -473,7 +482,7 @@ function App() {
         location: userRegionDisplay || 'Kuala Lumpur, Malaysia',
         ...(userLocation ? { user_lat: userLocation.lat, user_lng: userLocation.lng } : {})
       }
-      const res = await fetch(`http://localhost:8000/api/evaluate_risk?demo=${demoMode}`, {
+      const res = await fetch(`${API_URL}/api/evaluate_risk?demo=${demoMode}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
       })
