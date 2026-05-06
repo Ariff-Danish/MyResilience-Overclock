@@ -3,6 +3,9 @@ import { Activity, ShieldAlert, PackageSearch, Users, Radar, AlertTriangle, Shie
 import { Radar as RechartsRadar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip } from 'recharts'
 import './App.css'
 
+// API base URL — set VITE_API_URL in your .env for production (e.g. https://myapp-api.vercel.app)
+const API = import.meta.env.VITE_API_URL || ''
+
 // Haversine great-circle distance (km)
 const haversineKm = (lat1, lng1, lat2, lng2) => {
   const R = 6371
@@ -218,7 +221,7 @@ function App() {
     // This eliminates the duplicate token burn from calling generate_pace separately
     const location = userRegionDisplay || 'Malaysia'
     try {
-      const invRes = await fetch('/api/analyze_inventory', {
+      const invRes = await fetch(`${API}/api/analyze_inventory`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ inventory, team, location, settings })
@@ -330,7 +333,7 @@ function App() {
           ? `&user_lat=${userLocation.lat}&user_lng=${userLocation.lng}`
           : ''
         const scenarioParam = demoMode ? `&demo_scenario=${demoScenario}` : ''
-        const res = await fetch(`/api/weather/live?demo=${demoMode}${scenarioParam}${locParams}`)
+        const res = await fetch(`${API}/api/weather/live?demo=${demoMode}${scenarioParam}${locParams}`)
         if (res.ok) {
           const data = await res.json()
           setLiveWeather(data)
@@ -537,7 +540,7 @@ function App() {
         location: userRegionDisplay || 'Kuala Lumpur, Malaysia',
         ...(userLocation ? { user_lat: userLocation.lat, user_lng: userLocation.lng } : {})
       }
-      const res = await fetch(`/api/evaluate_risk?demo=${demoMode}&demo_scenario=${demoScenario}`, {
+      const res = await fetch(`${API}/api/evaluate_risk?demo=${demoMode}&demo_scenario=${demoScenario}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
       })
