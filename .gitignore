@@ -18,7 +18,6 @@ frontend/.env.production.local
 # ── Node.js / Frontend (Vite) ─────────────────────────────────────────────────
 # Dependencies
 node_modules/
-package-lock.json  # Note: Can be commented out if you want to lock versions
 npm-debug.log
 yarn-error.log
 yarn-debug.log
