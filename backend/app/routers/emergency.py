@@ -179,6 +179,8 @@ async def fetch_mock_weather_data(
 
 # ── Routes ─────────────────────────────────────────────────────────────────────
 
+router = APIRouter()
+
 PROXIMITY_ALERT_KM = 150.0
 
 
