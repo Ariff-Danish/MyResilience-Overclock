@@ -489,10 +489,10 @@ async def evaluate_risk(req: RiskEvaluationRequest, demo: bool = False):
             weather=weather, survival=survival, team=team, location=user_location_display
         )
 
-        # Autonomous dispatch — only if user is actually in an affected area
+        # Autonomous dispatch — automatically trigger if there are ANY MET weather threats nearby, regardless of user inventory.
         evac_data = None
         sms_auto_results = []
-        if survival.evacuation_urgency in ["immediate", "prepare"] and nearby_alerts:
+        if nearby_alerts:
             try:
                 evac_result = await run_evacuation_advisor_agent(
                     disaster_type=weather.disaster_type,

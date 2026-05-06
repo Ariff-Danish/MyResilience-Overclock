@@ -1,31 +1,119 @@
-# Python
+# ==============================================================================
+# MyResilience-Overclock — Comprehensive .gitignore
+# ==============================================================================
+
+# ── Environment Variables (CRITICAL: Never commit these) ──────────────────────
+.env
+.env.*
+!.env.example
+*.local
+backend/.env
+frontend/.env
+frontend/.env.production.local
+
+# ── Vercel Deployment & Caches ────────────────────────────────────────────────
+.vercel/
+.now/
+
+# ── Node.js / Frontend (Vite) ─────────────────────────────────────────────────
+# Dependencies
+node_modules/
+package-lock.json  # Note: Can be commented out if you want to lock versions
+npm-debug.log
+yarn-error.log
+yarn-debug.log
+
+# Build Outputs
+frontend/dist/
+frontend/dist-ssr/
+frontend/build/
+
+# Vite Caches
+frontend/.vite/
+frontend/node_modules/.vite/
+
+# ── Python / Backend (FastAPI) ────────────────────────────────────────────────
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
+*$py.class
 *.pyo
 *.pyd
+
+# Virtual Environments
 venv/
 .venv/
-*.egg-info/
-dist/
+env/
+.env/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Distribution / Packaging
 build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
-# Environment — NEVER commit these
-backend/.env
-.env
+# Testing & Coverage
+.coverage
+.coverage.*
+.tox/
+.nox/
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
 
-# Node / Frontend
-node_modules/
-frontend/dist/
-frontend/.vite/
+# Type Checking
+.mypy_cache/
+.pyre/
+.typeguard/
 
-# IDE
-.vscode/
-.idea/
-*.swp
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Logs
+# ── Logs & Databases ──────────────────────────────────────────────────────────
 *.log
+*.sqlite3
+*.db
+
+# ── OS Generated Files ────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+ehthumbs_vista.db
+Thumbs.db
+Desktop.ini
+
+# ── IDEs & Editors ────────────────────────────────────────────────────────────
+# VS Code
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# IntelliJ / JetBrains (PyCharm, WebStorm)
+.idea/
+*.iws
+*.iml
+*.ipr
+out/
+
+# Other Editors
+*.swp
+*.swo
+*~
+.viminfo
