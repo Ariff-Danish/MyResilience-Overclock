@@ -48,8 +48,12 @@ function App() {
   const [sortBy, setSortBy] = useState('category') // category, stock, expiry
 
   // AI Results
-  const [inventoryAnalysis, setInventoryAnalysis] = useState(null)
-  const [pacePlan, setPacePlan] = useState(null)
+  const [inventoryAnalysis, setInventoryAnalysis] = useState(() => {
+    try { const s = localStorage.getItem('myresilience_analysis'); return s ? JSON.parse(s) : null } catch { return null }
+  })
+  const [pacePlan, setPacePlan] = useState(() => {
+    try { const s = localStorage.getItem('myresilience_pace'); return s ? JSON.parse(s) : null } catch { return null }
+  })
   const [recentAlert, setRecentAlert] = useState(null)
   const [liveWeather, setLiveWeather] = useState(null)
   const [lastAlertHash, setLastAlertHash] = useState('') // For change detection
@@ -121,12 +125,7 @@ function App() {
   }
 
   // --- AUTO ANALYSIS (Debounced) ---
-  const initialRender = useRef(true)
   useEffect(() => {
-    if (initialRender.current) {
-      initialRender.current = false
-      return
-    }
     const timer = setTimeout(() => {
       runAutoAnalysis()
     }, 1500)
@@ -152,6 +151,7 @@ function App() {
         const payload = await invRes.json()
         invData = payload.analysis
         setInventoryAnalysis(invData)
+        localStorage.setItem('myresilience_analysis', JSON.stringify(invData))
 
         // Track readiness score history (keep last 10)
         setScoreHistory(prev => {
@@ -166,6 +166,7 @@ function App() {
         if (payload.pace) {
           paceData = payload.pace
           setPacePlan(paceData)
+          localStorage.setItem('myresilience_pace', JSON.stringify(paceData))
           reasonString += `[P.A.C.E Strategist] ${paceData.reasoning}`
         }
         if (payload.coordinator_message) {
