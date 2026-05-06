@@ -204,12 +204,7 @@ function App() {
   }
 
   // --- AUTO ANALYSIS (Debounced) ---
-  const initialRender = useRef(true)
   useEffect(() => {
-    if (initialRender.current) {
-      initialRender.current = false
-      return
-    }
     const timer = setTimeout(() => {
       runAutoAnalysis()
     }, 1500)
