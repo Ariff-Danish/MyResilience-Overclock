@@ -1,23 +1,25 @@
 import { useState, useEffect, useRef } from 'react'
-import { Activity, ShieldAlert, PackageSearch, Users, Radar, AlertTriangle, ShieldCheck, ChevronDown, ChevronRight, Filter, Menu, ChevronLeft, Map, Phone, Copy, Navigation, FileDown, ChevronUp } from 'lucide-react'
+import { Activity, ShieldAlert, PackageSearch, Users, Radar, AlertTriangle, ShieldCheck, ChevronDown, ChevronRight, Filter, Menu, ChevronLeft, Map, Phone, Copy, Navigation, FileDown, ChevronUp, Edit2, X, Settings } from 'lucide-react'
 import { Radar as RechartsRadar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip } from 'recharts'
 import './App.css'
-
-const API_BASE_URL = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:8000' : 'https://myresilience-overclock-api.vercel.app');
 
 // Haversine great-circle distance (km)
 const haversineKm = (lat1, lng1, lat2, lng2) => {
   const R = 6371
   const dLat = (lat2 - lat1) * Math.PI / 180
   const dLng = (lng2 - lng1) * Math.PI / 180
-  const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a))
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
 }
 
 function App() {
   const [activeTab, setActiveTab] = useState('dashboard')
   const [demoMode, setDemoMode] = useState(true)
   const [isSidebarOpen, setSidebarOpen] = useState(true)
+  const [trendExpanded, setTrendExpanded] = useState(false)
+  // Inventory UI
+  const [showAddForm, setShowAddForm] = useState(false)
+  const [filterMode, setFilterMode] = useState('all') // all | low_stock | expiring
 
   // Core State
   const DEFAULT_INVENTORY = [
@@ -40,6 +42,19 @@ function App() {
     try { const s = localStorage.getItem('myresilience_team'); return s ? JSON.parse(s) : DEFAULT_TEAM } catch { return DEFAULT_TEAM }
   })
 
+  const [settings, setSettings] = useState(() => {
+    try {
+      const s = localStorage.getItem('myresilience_settings')
+      return s ? JSON.parse(s) : { locationTracking: false, emailPreparedness: false, emailAdvisories: false, emailEmergency: false }
+    } catch {
+      return { locationTracking: false, emailPreparedness: false, emailAdvisories: false, emailEmergency: false }
+    }
+  })
+
+  useEffect(() => { localStorage.setItem('myresilience_settings', JSON.stringify(settings)) }, [settings])
+
+
+
   // Persist to localStorage
   useEffect(() => { localStorage.setItem('myresilience_inventory', JSON.stringify(inventory)) }, [inventory])
   useEffect(() => { localStorage.setItem('myresilience_team', JSON.stringify(team)) }, [team])
@@ -48,12 +63,8 @@ function App() {
   const [sortBy, setSortBy] = useState('category') // category, stock, expiry
 
   // AI Results
-  const [inventoryAnalysis, setInventoryAnalysis] = useState(() => {
-    try { const s = localStorage.getItem('myresilience_analysis'); return s ? JSON.parse(s) : null } catch { return null }
-  })
-  const [pacePlan, setPacePlan] = useState(() => {
-    try { const s = localStorage.getItem('myresilience_pace'); return s ? JSON.parse(s) : null } catch { return null }
-  })
+  const [inventoryAnalysis, setInventoryAnalysis] = useState(null)
+  const [pacePlan, setPacePlan] = useState(null)
   const [recentAlert, setRecentAlert] = useState(null)
   const [liveWeather, setLiveWeather] = useState(null)
   const [lastAlertHash, setLastAlertHash] = useState('') // For change detection
@@ -75,30 +86,31 @@ function App() {
   const [userLocation, setUserLocation] = useState(null)
   const [locationLoading, setLocationLoading] = useState(false)
   const [locationError, setLocationError] = useState(null)
-  
-  // Auto-fetch GPS on load to make advisory fully autonomous
+
   useEffect(() => {
-    if ('geolocation' in navigator) {
-      setLocationLoading(true)
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude })
-          setLocationLoading(false)
-        },
-        (err) => {
-          setLocationError(err.message)
-          setLocationLoading(false)
-        }
-      )
+    if (settings.locationTracking && !userLocation && !locationError && !locationLoading) {
+      if (navigator.geolocation) {
+        setLocationLoading(true)
+        navigator.geolocation.getCurrentPosition(
+          pos => { setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude }); setLocationLoading(false) },
+          () => { setLocationError('Location access denied. Please allow it in your browser.'); setLocationLoading(false) },
+          { enableHighAccuracy: true, timeout: 10000 }
+        )
+      } else {
+        setLocationError('Geolocation not supported.')
+      }
+    } else if (!settings.locationTracking && userLocation) {
+      setUserLocation(null)
+      setLocationError(null)
     }
-  }, [])
+  }, [settings.locationTracking, userLocation, locationLoading, locationError])
   // Distant alerts (threats in other regions, not affecting user)
   const [distantAlerts, setDistantAlerts] = useState([])
   const [userRegionDisplay, setUserRegionDisplay] = useState(null)
   // Live clock
   const [liveTime, setLiveTime] = useState(new Date())
   useEffect(() => { const t = setInterval(() => setLiveTime(new Date()), 1000); return () => clearInterval(t) }, [])
-  
+
   // Grouped Activity Log
   const [activityEvents, setActivityEvents] = useState([
     {
@@ -125,7 +137,12 @@ function App() {
   }
 
   // --- AUTO ANALYSIS (Debounced) ---
+  const initialRender = useRef(true)
   useEffect(() => {
+    if (initialRender.current) {
+      initialRender.current = false
+      return
+    }
     const timer = setTimeout(() => {
       runAutoAnalysis()
     }, 1500)
@@ -137,10 +154,10 @@ function App() {
     // This eliminates the duplicate token burn from calling generate_pace separately
     const location = userRegionDisplay || 'Malaysia'
     try {
-      const invRes = await fetch(`${API_BASE_URL}/api/analyze_inventory`, {
+      const invRes = await fetch('http://localhost:8000/api/analyze_inventory', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ inventory, team, location })
+        body: JSON.stringify({ inventory, team, location, settings })
       })
 
       let invData = null
@@ -151,7 +168,6 @@ function App() {
         const payload = await invRes.json()
         invData = payload.analysis
         setInventoryAnalysis(invData)
-        localStorage.setItem('myresilience_analysis', JSON.stringify(invData))
 
         // Track readiness score history (keep last 10)
         setScoreHistory(prev => {
@@ -166,7 +182,6 @@ function App() {
         if (payload.pace) {
           paceData = payload.pace
           setPacePlan(paceData)
-          localStorage.setItem('myresilience_pace', JSON.stringify(paceData))
           reasonString += `[P.A.C.E Strategist] ${paceData.reasoning}`
         }
         if (payload.coordinator_message) {
@@ -207,7 +222,7 @@ function App() {
         ? selectedDisasterType
         : (recentAlert?.weather_disaster_type || 'flood')
       const severity = recentAlert?.weather_severity || 'warning'
-      const res = await fetch(`${API_BASE_URL}/api/evacuation_advisory`, {
+      const res = await fetch('http://localhost:8000/api/evacuation_advisory', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -215,6 +230,7 @@ function App() {
           severity: severity,
           location: userRegionDisplay || 'Malaysia',
           team: team,
+          settings: settings,
           send_sms_alerts: sendSms,
           ...(userLocation ? { user_lat: userLocation.lat, user_lng: userLocation.lng } : {})
         })
@@ -249,7 +265,7 @@ function App() {
         const locParams = userLocation
           ? `&user_lat=${userLocation.lat}&user_lng=${userLocation.lng}`
           : ''
-        const res = await fetch(`${API_BASE_URL}/api/weather/live?demo=${demoMode}${locParams}`)
+        const res = await fetch(`http://localhost:8000/api/weather/live?demo=${demoMode}${locParams}`)
         if (res.ok) {
           const data = await res.json()
           setLiveWeather(data)
@@ -260,8 +276,8 @@ function App() {
 
           const alertString = JSON.stringify(data.alerts)
 
-          // Only trigger agents if nearby alerts changed
-          if (alertString !== lastAlertHash) {
+          // Only trigger agents if nearby alerts changed, or demo toggle
+          if (alertString !== lastAlertHash || demoMode) {
             setLastAlertHash(alertString)
             if (data.alerts && data.alerts.length > 0) {
               triggerLiveAlert(data.alerts[0].type, data.alerts[0].description)
@@ -283,9 +299,9 @@ function App() {
     // Initial check
     pollWeather(true)
 
-    // Warning Sync: Every 1 minute (60,000 ms) for maximum life-saving early detection
-    const warningInterval = setInterval(() => pollWeather(false), 60000)
-    
+    // Warning Sync: Every 5 minutes (300,000 ms)
+    const warningInterval = setInterval(() => pollWeather(false), 300000)
+
     // Daily Forecast Sync: Every 24 hours (86,400,000 ms)
     const dailyInterval = setInterval(() => pollWeather(true), 86400000)
 
@@ -451,13 +467,12 @@ function App() {
 
   const triggerLiveAlert = async (alertType, desc) => {
     try {
-      setEvacLoading(true)
       const body = {
-        inventory, team,
+        inventory, team, settings,
         location: userRegionDisplay || 'Kuala Lumpur, Malaysia',
         ...(userLocation ? { user_lat: userLocation.lat, user_lng: userLocation.lng } : {})
       }
-      const res = await fetch(`${API_BASE_URL}/api/evaluate_risk?demo=${demoMode}`, {
+      const res = await fetch(`http://localhost:8000/api/evaluate_risk?demo=${demoMode}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
       })
@@ -496,15 +511,13 @@ function App() {
       }
     } catch (err) {
       console.error(err)
-    } finally {
-      setEvacLoading(false)
     }
   }
 
   // --- FORMS ---
   const categories = ['Water', 'Food', 'Medical', 'Security', 'Shelter', 'Communication', 'Power', 'Tools', 'Hygiene', 'Transport', 'Documents', 'Misc']
   const [newItem, setNewItem] = useState({ name: '', category: 'Water', unit: 'Units', current_amount: 0, target_amount: 0, expiry_date: '' })
-  
+
   const addInventoryItem = () => {
     if (!newItem.name) return
     setInventory([{ ...newItem, id: Date.now().toString() }, ...inventory])
@@ -535,6 +548,25 @@ function App() {
     if (!newMember.name) return
     setTeam([...team, { ...newMember, id: Date.now().toString() }])
     setNewMember({ name: '', age: 0, role: 'family', email: '', phone: '', remarks: '' })
+  }
+
+  const [editingMemberId, setEditingMemberId] = useState(null)
+  const [editMemberData, setEditMemberData] = useState(null)
+
+  const startEditMember = (member) => {
+    setEditingMemberId(member.id)
+    setEditMemberData({ ...member })
+  }
+
+  const saveEditMember = () => {
+    setTeam(team.map(m => m.id === editingMemberId ? editMemberData : m))
+    setEditingMemberId(null)
+    setEditMemberData(null)
+  }
+
+  const cancelEditMember = () => {
+    setEditingMemberId(null)
+    setEditMemberData(null)
   }
 
   // --- SORTING HELPERS ---
@@ -657,18 +689,18 @@ function App() {
   const renderDashboard = () => (
     <div className="tab-pane animate-fade-in">
       <div className="dash-header">
-        <div style={{display:'flex', alignItems:'center', gap:'1rem'}}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
           <h2>⚡ COMMAND DASHBOARD</h2>
           <span className="header-status-badge">
             {liveWeather?.alerts?.length > 0 ? '🔴 THREAT ACTIVE' : '🟢 NOMINAL'}
           </span>
         </div>
-        <div style={{display:'flex', alignItems:'center', gap:'1.25rem', flexWrap:'wrap'}}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem', flexWrap: 'wrap' }}>
           {userRegionDisplay && (
             <span className="header-location-pill">📍 {userRegionDisplay.split(',')[0]}</span>
           )}
           <span className="header-clock tech-font">
-            {liveTime.toLocaleTimeString('en-MY', {hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false})} MYT
+            {liveTime.toLocaleTimeString('en-MY', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })} MYT
           </span>
           <div className="demo-toggle">
             <label>DEMO</label>
@@ -684,94 +716,77 @@ function App() {
         <div className="panel radar-panel">
           <h3><Radar className="icon-sm" /> Asset Readiness</h3>
           {inventoryAnalysis ? (
-            <ResponsiveContainer width="100%" height={250}>
-              <RadarChart cx="50%" cy="50%" outerRadius="70%" data={getRadarData()}>
-                <PolarGrid stroke="#334155" />
-                <PolarAngleAxis dataKey="subject" tick={{ fill: '#94a3b8', fontSize: 12 }} />
-                <PolarRadiusAxis angle={30} domain={[0, 100]} tick={false} axisLine={false} />
-                <RechartsRadar name="Score" dataKey="A" stroke="#84cc16" fill="#84cc16" fillOpacity={0.3} />
-              </RadarChart>
-            </ResponsiveContainer>
-          ) : (
-             <div className="panel-loading" style={{flexDirection: 'column', alignItems: 'flex-start', padding: '1rem 0'}}>
-               <div className="skeleton skeleton-text title"></div>
-               <div className="skeleton skeleton-text"></div>
-               <div className="skeleton skeleton-text"></div>
-               <div className="skeleton skeleton-text short"></div>
-             </div>
-          )}
-        </div>
+            <>
+              <ResponsiveContainer width="100%" height={250}>
+                <RadarChart cx="50%" cy="50%" outerRadius="70%" data={getRadarData()}>
+                  <PolarGrid stroke="#334155" />
+                  <PolarAngleAxis dataKey="subject" tick={{ fill: '#94a3b8', fontSize: 12 }} />
+                  <PolarRadiusAxis angle={30} domain={[0, 100]} tick={false} axisLine={false} />
+                  <RechartsRadar name="Score" dataKey="A" stroke="#84cc16" fill="#84cc16" fillOpacity={0.3} />
+                </RadarChart>
+              </ResponsiveContainer>
 
-        <div className="panel alert-panel">
-          <h3>
-            <div style={{display:'flex', alignItems:'center', gap:'0.5rem'}}>
-              <AlertTriangle className="icon-sm text-yellow" /> Active Intel
-            </div>
-            <span className="text-muted" style={{fontSize:'0.8rem', fontWeight:'normal'}}>
-              {userRegionDisplay || liveWeather?.location || 'Detecting location...'}
-            </span>
-          </h3>
-
-          {/* Nearby threat alert */}
-          {liveWeather && liveWeather.alerts.length > 0 ? (
-            <div className="alert-box critical">
-              <h4>🚨 {liveWeather.alerts[0].type.toUpperCase()}</h4>
-              <p>{liveWeather.alerts[0].description}</p>
-              {liveWeather.alerts[0].proximity_km != null && (
-                <span className="proximity-tag nearby">⚠️ {liveWeather.alerts[0].proximity_km} km from you</span>
-              )}
-            </div>
-          ) : (
-            <div className="alert-box safe">
-              <ShieldCheck className="icon-lg text-green" />
-              <h4>Your Area is Safe</h4>
-              <p>
-                {userLocation
-                  ? `No active threats detected within 150 km of your location.`
-                  : 'Enable location for personalised threat detection.'}
-              </p>
-            </div>
-          )}
-
-          {/* Distant alerts notice */}
-          {distantAlerts.length > 0 && (
-            <div className="distant-alerts-notice">
-              <span className="distant-label">🌐 Warnings in other regions ({distantAlerts.length})</span>
-              {distantAlerts.slice(0, 2).map((a, i) => (
-                <div key={i} className="distant-alert-item">
-                  <span className="distant-alert-type">{a.type.replace('OFFICIAL WARNING: ', '').replace('Forecast: ', '')}</span>
-                  {a.proximity_km && <span className="proximity-tag distant">{a.proximity_km} km away</span>}
-                </div>
-              ))}
-              {distantAlerts.length > 2 && (
-                <span className="text-muted" style={{fontSize:'0.75rem'}}>+{distantAlerts.length - 2} more — not affecting your area</span>
-              )}
-            </div>
-          )}
-
-          {recentAlert && (
-            <div className="recent-alert-actions mt-4">
-              <h4>Agent Protocol: {recentAlert.action_taken.toUpperCase()}</h4>
-              {recentAlert.user_location && (
-                <p className="text-muted" style={{fontSize:'0.8rem'}}>📍 Assessed for: {recentAlert.user_location}</p>
-              )}
-              {recentAlert.action_taken === 'email_sent' && (
-                <div className="email-preview">
-                  <p><strong>Comms sent to:</strong> {recentAlert.contacts_notified.join(', ')}</p>
-                  <pre>{recentAlert.message_drafted}</pre>
+              {scoreHistory.length >= 2 && (
+                <div className="score-trend-inline">
+                  <h4 className="tech-font" style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: '0.5rem', textTransform: 'uppercase', letterSpacing: '1px', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <Activity size={12} /> Readiness Score Trend
+                  </h4>
+                  <ResponsiveContainer width="100%" height={80}>
+                    <LineChart data={scoreHistory} margin={{ top: 5, right: 10, left: -30, bottom: 0 }}>
+                      <XAxis dataKey="t" tick={{ fill: '#8b949e', fontSize: 9 }} />
+                      <YAxis domain={[0, 100]} tick={{ fill: '#8b949e', fontSize: 9 }} />
+                      <Tooltip
+                        contentStyle={{ background: '#1c2128', border: '1px solid #30363d', borderRadius: '6px', fontSize: '0.7rem' }}
+                        labelStyle={{ color: '#8b949e' }}
+                        itemStyle={{ color: '#84cc16' }}
+                      />
+                      <Line type="monotone" dataKey="score" stroke="#84cc16" strokeWidth={2} dot={{ r: 2, fill: '#84cc16' }} activeDot={{ r: 4 }} />
+                    </LineChart>
+                  </ResponsiveContainer>
                 </div>
               )}
+            </>
+          ) : (
+            <div className="panel-loading" style={{ flexDirection: 'column', alignItems: 'flex-start', padding: '1rem 0' }}>
+              <div className="skeleton skeleton-text title"></div>
+              <div className="skeleton skeleton-text"></div>
+              <div className="skeleton skeleton-text"></div>
+              <div className="skeleton skeleton-text short"></div>
             </div>
           )}
         </div>
 
-        <div className="panel weather-intel-panel">
-          <h3 style={{justifyContent:'space-between', flexWrap:'wrap', gap:'0.5rem'}}>
-            <span style={{display:'flex',alignItems:'center',gap:'0.5rem'}}>🌤️ Weather Intel</span>
-            {weatherSyncTime && <span className="text-muted tech-font" style={{fontSize:'0.7rem',fontWeight:'normal'}}>MET Malaysia · synced {weatherSyncTime}</span>}
+        <div className={`panel tactical-intel-panel ${liveWeather?.alerts?.length > 0 ? 'critical-glow' : ''}`}>
+          <h3 style={{ justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              {liveWeather?.alerts?.length > 0 ? <AlertTriangle className="icon-sm text-red" /> : <Radar className="icon-sm text-green" />}
+              Tactical Intel
+            </div>
+            {weatherSyncTime && <span className="text-muted tech-font" style={{ fontSize: '0.7rem', fontWeight: 'normal' }}>MET Malaysia · synced {weatherSyncTime}</span>}
           </h3>
+
           {liveWeather ? (
-            <div className="weather-body">
+            <div className="intel-body">
+              {/* Alert Section (Top Priority) */}
+              {liveWeather.alerts.length > 0 && (() => {
+                const rawDesc = liveWeather.alerts[0].description || ''
+                // Strip embedded forecast period breakdowns from the alert description
+                const cleanDesc = rawDesc
+                  .replace(/\.?\s*(Morning|Afternoon|Night|Pagi|Petang|Malam)\s*:[^.]*\./gi, '')
+                  .replace(/\s{2,}/g, ' ')
+                  .trim()
+                return (
+                  <div className="alert-box critical mb-4">
+                    <h4>🚨 {liveWeather.alerts[0].type.toUpperCase()}</h4>
+                    {cleanDesc && <p>{cleanDesc}</p>}
+                    {liveWeather.alerts[0].proximity_km != null && (
+                      <span className="proximity-tag nearby">⚠️ {liveWeather.alerts[0].proximity_km} km from you</span>
+                    )}
+                  </div>
+                )
+              })()}
+
+
               <div className="weather-temp-row">
                 <div className="weather-temp-block">
                   <span className="temp-number tech-font">{liveWeather.current_conditions.temperature_celsius}°</span>
@@ -792,10 +807,9 @@ function App() {
 
               {(liveWeather.current_conditions.morning || liveWeather.current_conditions.afternoon || liveWeather.current_conditions.night) && (
                 <div className="forecast-strip">
-                  {[['PAGI', 'morning'], ['PETANG', 'afternoon'], ['MALAM', 'night']].map(([label, key]) =>
+                  {[['morning'], ['afternoon'], ['night']].map(([key]) =>
                     liveWeather.current_conditions[key] ? (
-                      <div key={label} className="forecast-segment">
-                        <span className="forecast-label">{label}</span>
+                      <div key={key} className="forecast-segment">
                         <span className="forecast-icon">{translateWeather(liveWeather.current_conditions[key]).icon}</span>
                         <span className="forecast-desc">{translateWeather(liveWeather.current_conditions[key]).en}</span>
                         <span className="forecast-bm text-muted">{liveWeather.current_conditions[key]}</span>
@@ -805,16 +819,18 @@ function App() {
                 </div>
               )}
 
-              <div className="weather-footer">
+              <div className="weather-footer" style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--panel-border)' }}>
                 {liveWeather.official_warnings_count > 0
                   ? <span className="weather-warning-badge">⚠️ {liveWeather.official_warnings_count} official MET warning(s) active</span>
-                  : <span className="weather-clear-badge">✅ No official MET warnings for this region</span>
+                  : distantAlerts.length > 0
+                    ? <span className="text-muted" style={{ fontSize: '0.75rem' }}>🌐 {distantAlerts.length} distant alerts in other regions</span>
+                    : <span className="weather-clear-badge">✅ Region status: Nominal</span>
                 }
                 <a href="https://www.met.gov.my" target="_blank" rel="noopener noreferrer" className="met-link">MET Malaysia ↗</a>
               </div>
             </div>
           ) : (
-            <div className="panel-loading" style={{flexDirection:'column',alignItems:'flex-start',padding:'1rem 0'}}>
+            <div className="panel-loading" style={{ flexDirection: 'column', alignItems: 'flex-start', padding: '1rem 0' }}>
               <div className="skeleton skeleton-text title"></div>
               <div className="skeleton skeleton-text"></div>
               <div className="skeleton skeleton-text short"></div>
@@ -830,33 +846,33 @@ function App() {
                 <span className={`score-number tech-font ${inventoryAnalysis.readiness_score >= 70 ? 'text-green' : inventoryAnalysis.readiness_score >= 40 ? 'text-yellow' : 'text-red'}`}>
                   {inventoryAnalysis.readiness_score}
                 </span>
-                <span className="text-muted" style={{fontSize:'0.9rem'}}>/&nbsp;100</span>
+                <span className="text-muted" style={{ fontSize: '0.9rem' }}>/&nbsp;100</span>
                 {inventoryAnalysis.survival_days != null && (
                   <span className="survival-days-pill" title="Estimated days of supply remaining">
                     🕒 {inventoryAnalysis.survival_days} day{inventoryAnalysis.survival_days !== 1 ? 's' : ''} supply
                   </span>
                 )}
               </div>
-              <p className="text-muted" style={{fontSize:'0.85rem'}}>{inventoryAnalysis.summary}</p>
+              <p className="text-muted" style={{ fontSize: '0.85rem' }}>{inventoryAnalysis.summary}</p>
               {inventoryAnalysis.critical_gaps.length > 0 && (
                 <div className="gaps-row">
-                  <span style={{fontSize:'0.75rem', fontWeight:'bold', color:'var(--warning)'}}>⚠ GAPS:</span>
+                  <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: 'var(--warning)' }}>⚠ GAPS:</span>
                   {inventoryAnalysis.critical_gaps.map(g => <span key={g} className="gap-tag">{g}</span>)}
                 </div>
               )}
               {inventoryAnalysis.low_stock_items?.length > 0 && (
-                <div className="gaps-row" style={{marginTop:'0.4rem'}}>
-                  <span style={{fontSize:'0.75rem', fontWeight:'bold', color:'var(--danger)'}}>📉 LOW STOCK:</span>
-                  {inventoryAnalysis.low_stock_items.slice(0,4).map(item => (
-                    <span key={item} className="gap-tag" style={{borderColor:'rgba(239,68,68,0.4)',color:'#f87171'}}>{item}</span>
+                <div className="gaps-row" style={{ marginTop: '0.4rem' }}>
+                  <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: 'var(--danger)' }}>📉 LOW STOCK:</span>
+                  {inventoryAnalysis.low_stock_items.slice(0, 4).map(item => (
+                    <span key={item} className="gap-tag" style={{ borderColor: 'rgba(239,68,68,0.4)', color: '#f87171' }}>{item}</span>
                   ))}
                 </div>
               )}
               {inventoryAnalysis.expiring_items?.length > 0 && (
-                <div className="gaps-row" style={{marginTop:'0.4rem'}}>
-                  <span style={{fontSize:'0.75rem', fontWeight:'bold', color:'var(--warning)'}}>⏳ EXPIRING:</span>
-                  {inventoryAnalysis.expiring_items.slice(0,3).map(item => (
-                    <span key={item} className="gap-tag" style={{borderColor:'rgba(234,179,8,0.4)',color:'#facc15'}}>{item}</span>
+                <div className="gaps-row" style={{ marginTop: '0.4rem' }}>
+                  <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: 'var(--warning)' }}>⏳ EXPIRING:</span>
+                  {inventoryAnalysis.expiring_items.slice(0, 3).map(item => (
+                    <span key={item} className="gap-tag" style={{ borderColor: 'rgba(234,179,8,0.4)', color: '#facc15' }}>{item}</span>
                   ))}
                 </div>
               )}
@@ -870,7 +886,7 @@ function App() {
               </div>
             </div>
           ) : (
-            <div className="panel-loading" style={{flexDirection:'column',alignItems:'flex-start',padding:'1rem 0'}}>
+            <div className="panel-loading" style={{ flexDirection: 'column', alignItems: 'flex-start', padding: '1rem 0' }}>
               <div className="skeleton skeleton-text title"></div>
               <div className="skeleton skeleton-text"></div>
               <div className="skeleton skeleton-text short"></div>
@@ -878,24 +894,7 @@ function App() {
           )}
         </div>
 
-        {/* B2 — Readiness Score Trend */}
-        {scoreHistory.length >= 2 && (
-          <div className="panel score-trend-panel full-width">
-            <h3>📈 Readiness Score Trend</h3>
-            <ResponsiveContainer width="100%" height={120}>
-              <LineChart data={scoreHistory} margin={{ top: 5, right: 20, left: -30, bottom: 0 }}>
-                <XAxis dataKey="t" tick={{ fill: '#8b949e', fontSize: 10 }} />
-                <YAxis domain={[0, 100]} tick={{ fill: '#8b949e', fontSize: 10 }} />
-                <Tooltip
-                  contentStyle={{ background: '#1c2128', border: '1px solid #30363d', borderRadius: '6px', fontSize: '0.8rem' }}
-                  labelStyle={{ color: '#8b949e' }}
-                  itemStyle={{ color: '#84cc16' }}
-                />
-                <Line type="monotone" dataKey="score" stroke="#84cc16" strokeWidth={2} dot={{ r: 3, fill: '#84cc16' }} activeDot={{ r: 5 }} />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        )}
+
 
         {/* B3 — Quick Actions Panel */}
         <div className="panel quick-actions-panel full-width">
@@ -935,15 +934,15 @@ function App() {
         <div className="panel pace-panel full-width">
           <h3><ShieldAlert className="icon-sm" /> Autonomous P.A.C.E. Strategy</h3>
           {!pacePlan ? (
-             <div className="panel-loading" style={{flexDirection: 'column', alignItems: 'flex-start', padding: '1rem 0'}}>
-               <div className="skeleton skeleton-text title"></div>
-               <div className="skeleton skeleton-text"></div>
-               <div className="skeleton skeleton-text short"></div>
-               <div style={{marginTop: '1rem', width: '100%'}}>
-                 <div className="skeleton skeleton-text"></div>
-                 <div className="skeleton skeleton-text short"></div>
-               </div>
-             </div>
+            <div className="panel-loading" style={{ flexDirection: 'column', alignItems: 'flex-start', padding: '1rem 0' }}>
+              <div className="skeleton skeleton-text title"></div>
+              <div className="skeleton skeleton-text"></div>
+              <div className="skeleton skeleton-text short"></div>
+              <div style={{ marginTop: '1rem', width: '100%' }}>
+                <div className="skeleton skeleton-text"></div>
+                <div className="skeleton skeleton-text short"></div>
+              </div>
+            </div>
           ) : (
             <div className="pace-grid">
               <div className="pace-card p-primary">
@@ -981,118 +980,235 @@ function App() {
     </div>
   )
 
-  const renderInventory = () => (
+  const renderInventory = () => {
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    const in30Days = new Date(today)
+    in30Days.setDate(today.getDate() + 30)
+
+    const getExpiryStatus = (expiry_date) => {
+      if (!expiry_date) return 'ok'
+      const d = new Date(expiry_date)
+      if (d < today) return 'expired'
+      if (d <= in30Days) return 'expiring'
+      return 'ok'
+    }
+
+    const filteredInventory = getSortedInventory().filter(item => {
+      if (filterMode === 'low_stock') {
+        const r = item.target_amount ? item.current_amount / item.target_amount : 0
+        return r < 0.4
+      }
+      if (filterMode === 'expiring') {
+        const s = getExpiryStatus(item.expiry_date)
+        return s === 'expired' || s === 'expiring'
+      }
+      return true
+    })
+
+    return (
     <div className="tab-pane animate-fade-in">
-      <h2>Asset Inventory</h2>
-      
-      <div className="panel form-panel mb-4">
-        <div className="input-row">
-          <input placeholder="Asset Name" value={newItem.name} onChange={e => setNewItem({...newItem, name: e.target.value})} />
-          <select value={newItem.category} onChange={e => setNewItem({...newItem, category: e.target.value})}>
-            {categories.map(c => <option key={c} value={c}>{c}</option>)}
-          </select>
-          <input placeholder="Unit (e.g. Cans)" value={newItem.unit} onChange={e => setNewItem({...newItem, unit: e.target.value})} />
-          <input type="number" placeholder="Current Qty" value={newItem.current_amount === 0 ? '' : newItem.current_amount} onChange={e => setNewItem({...newItem, current_amount: Number(e.target.value)})} />
-          <input type="number" placeholder="Target Qty" value={newItem.target_amount === 0 ? '' : newItem.target_amount} onChange={e => setNewItem({...newItem, target_amount: Number(e.target.value)})} />
-          <input type="date" value={newItem.expiry_date} onChange={e => setNewItem({...newItem, expiry_date: e.target.value})} />
-          <button className="btn-primary" onClick={addInventoryItem}>Register</button>
-        </div>
+      <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'1rem', flexWrap:'wrap', gap:'0.75rem'}}>
+        <h2 style={{margin:0}}>Asset Inventory</h2>
+        <button
+          className={`btn-primary`}
+          style={{fontSize:'0.85rem', padding:'0.4rem 1rem', background: showAddForm ? 'var(--panel-border)' : undefined}}
+          onClick={() => setShowAddForm(p => !p)}
+        >
+          {showAddForm ? '✕ Close' : '+ Add Asset'}
+        </button>
       </div>
 
-      <div className="filter-row">
+      {showAddForm && (
+        <div className="panel form-panel mb-4" style={{animation:'fadeIn 0.2s ease'}}>
+          <h4 style={{marginBottom:'0.75rem', color:'var(--accent-green)'}}>Register New Asset</h4>
+          <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(160px,1fr))', gap:'0.6rem'}}>
+            <input placeholder="Asset Name" value={newItem.name} onChange={e => setNewItem({ ...newItem, name: e.target.value })} />
+            <select value={newItem.category} onChange={e => setNewItem({ ...newItem, category: e.target.value })}>
+              {categories.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <input placeholder="Unit (e.g. Cans)" value={newItem.unit} onChange={e => setNewItem({ ...newItem, unit: e.target.value })} />
+            <input type="number" placeholder="Current Qty" value={newItem.current_amount === 0 ? '' : newItem.current_amount} onChange={e => setNewItem({ ...newItem, current_amount: Number(e.target.value) })} />
+            <input type="number" placeholder="Target Qty" value={newItem.target_amount === 0 ? '' : newItem.target_amount} onChange={e => setNewItem({ ...newItem, target_amount: Number(e.target.value) })} />
+            <input type="date" value={newItem.expiry_date} onChange={e => setNewItem({ ...newItem, expiry_date: e.target.value })} />
+          </div>
+          <button className="btn-primary" style={{marginTop:'0.75rem'}} onClick={() => { addInventoryItem(); setShowAddForm(false) }}>Register Asset</button>
+        </div>
+      )}
+
+      <div className="filter-row" style={{marginBottom:'0.75rem', flexWrap:'wrap', gap:'0.5rem'}}>
         <Filter className="icon-sm text-muted" />
-        <span className="text-muted">Sort by:</span>
-        <select value={sortBy} onChange={e => setSortBy(e.target.value)}>
-          <option value="category">Category</option>
-          <option value="stock">Stock Level (Lowest First)</option>
-          <option value="expiry">Expiration Date (Soonest First)</option>
-        </select>
+        {[['all','All Items'],['low_stock','📉 Low Stock'],['expiring','⏳ Expiring / Expired']].map(([key, label]) => (
+          <button
+            key={key}
+            onClick={() => setFilterMode(key)}
+            style={{
+              padding:'0.3rem 0.75rem', borderRadius:'999px', fontSize:'0.78rem', fontWeight:'600', cursor:'pointer', border:'1px solid',
+              background: filterMode === key ? (key === 'expiring' ? 'rgba(234,179,8,0.15)' : key === 'low_stock' ? 'rgba(239,68,68,0.12)' : 'rgba(132,204,22,0.12)') : 'transparent',
+              borderColor: filterMode === key ? (key === 'expiring' ? '#facc15' : key === 'low_stock' ? '#f87171' : '#84cc16') : 'var(--panel-border)',
+              color: filterMode === key ? (key === 'expiring' ? '#fde047' : key === 'low_stock' ? '#fca5a5' : '#84cc16') : 'var(--text-muted)'
+            }}
+          >{label}</button>
+        ))}
+        <span style={{marginLeft:'auto', display:'flex', alignItems:'center', gap:'0.5rem'}}>
+          <span className="text-muted" style={{fontSize:'0.8rem'}}>Sort:</span>
+          <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{fontSize:'0.8rem'}}>
+            <option value="category">Category</option>
+            <option value="stock">Stock Level (Lowest First)</option>
+            <option value="expiry">Expiration Date (Soonest First)</option>
+          </select>
+        </span>
       </div>
 
       <div className="inventory-grid">
-        {getSortedInventory().map(item => {
-          const ratio = item.target_amount ? item.current_amount / item.target_amount : 0;
-          const isLow = ratio < 0.3;
-          const isMedium = ratio >= 0.3 && ratio < 0.8;
-          
+        {filteredInventory.map(item => {
+          const ratio = item.target_amount ? item.current_amount / item.target_amount : 0
+          // Standardised 3-tier colour: >80% green, 30-79% yellow, <30% red
+          const barClass = ratio >= 0.8 ? 'bg-green' : ratio >= 0.3 ? 'bg-yellow' : 'bg-red'
+          const expiryStatus = getExpiryStatus(item.expiry_date)
+          const isExpired = expiryStatus === 'expired'
+          const isExpiring = expiryStatus === 'expiring'
+
+          const cardBorderStyle = isExpired
+            ? { boxShadow: '0 0 0 2px rgba(239,68,68,0.7), 0 0 12px rgba(239,68,68,0.25)' }
+            : isExpiring
+            ? { boxShadow: '0 0 0 2px rgba(234,179,8,0.6), 0 0 10px rgba(234,179,8,0.2)' }
+            : {}
+
           if (editingId === item.id) {
             return (
               <div key={item.id} className={`panel asset-card cat-${item.category.toLowerCase()}`}>
-                <input style={{marginBottom: '0.5rem'}} value={editItemData.name} onChange={e => setEditItemData({...editItemData, name: e.target.value})} />
-                <select style={{marginBottom: '0.5rem'}} value={editItemData.category} onChange={e => setEditItemData({...editItemData, category: e.target.value})}>
+                <input style={{ marginBottom: '0.5rem' }} value={editItemData.name} onChange={e => setEditItemData({ ...editItemData, name: e.target.value })} />
+                <select style={{ marginBottom: '0.5rem' }} value={editItemData.category} onChange={e => setEditItemData({ ...editItemData, category: e.target.value })}>
                   {categories.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
                 <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
-                  <input type="number" placeholder="Current" value={editItemData.current_amount} onChange={e => setEditItemData({...editItemData, current_amount: Number(e.target.value)})} />
-                  <input type="number" placeholder="Target" value={editItemData.target_amount} onChange={e => setEditItemData({...editItemData, target_amount: Number(e.target.value)})} />
-                  <input placeholder="Unit" value={editItemData.unit} onChange={e => setEditItemData({...editItemData, unit: e.target.value})} />
+                  <input type="number" placeholder="Current" value={editItemData.current_amount} onChange={e => setEditItemData({ ...editItemData, current_amount: Number(e.target.value) })} />
+                  <input type="number" placeholder="Target" value={editItemData.target_amount} onChange={e => setEditItemData({ ...editItemData, target_amount: Number(e.target.value) })} />
+                  <input placeholder="Unit" value={editItemData.unit} onChange={e => setEditItemData({ ...editItemData, unit: e.target.value })} />
                 </div>
-                <input style={{marginBottom: '0.5rem'}} type="date" value={editItemData.expiry_date || ''} onChange={e => setEditItemData({...editItemData, expiry_date: e.target.value})} />
+                <input style={{ marginBottom: '0.5rem' }} type="date" value={editItemData.expiry_date || ''} onChange={e => setEditItemData({ ...editItemData, expiry_date: e.target.value })} />
                 <div style={{ display: 'flex', gap: '0.5rem' }}>
                   <button className="btn-primary" onClick={saveEdit}>Save</button>
-                  <button className="btn-primary" style={{backgroundColor: 'var(--panel-border)', color: 'var(--text-main)'}} onClick={cancelEdit}>Cancel</button>
+                  <button className="btn-primary" style={{ backgroundColor: 'var(--panel-border)', color: 'var(--text-main)' }} onClick={cancelEdit}>Cancel</button>
                 </div>
               </div>
             )
           }
 
           return (
-            <div key={item.id} className={`panel asset-card cat-${item.category.toLowerCase()}`}>
+            <div key={item.id} className={`panel asset-card cat-${item.category.toLowerCase()}`} style={cardBorderStyle}>
               <div className="asset-header">
-                <h4>{item.name}</h4>
-                <div style={{display:'flex', gap:'0.5rem'}}>
-                  <button className="icon-btn" onClick={() => startEdit(item)} style={{fontSize:'0.9rem'}}>✏️</button>
-                  <button className="icon-btn" onClick={() => setInventory(inventory.filter(i => i.id !== item.id))}>×</button>
+                <div style={{display:'flex', flexDirection:'column', gap:'0.2rem'}}>
+                  <h4 style={{margin:0}}>{item.name}</h4>
+                  {isExpired && (
+                    <span style={{fontSize:'0.7rem', fontWeight:'700', color:'#ef4444', background:'rgba(239,68,68,0.12)', border:'1px solid rgba(239,68,68,0.4)', borderRadius:'4px', padding:'1px 6px', width:'fit-content'}}>
+                      ⛔ EXPIRED
+                    </span>
+                  )}
+                  {isExpiring && (
+                    <span style={{fontSize:'0.7rem', fontWeight:'700', color:'#facc15', background:'rgba(234,179,8,0.1)', border:'1px solid rgba(234,179,8,0.4)', borderRadius:'4px', padding:'1px 6px', width:'fit-content'}}>
+                      ⚠️ EXPIRING SOON
+                    </span>
+                  )}
+                </div>
+                <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+                  <button className="icon-btn" onClick={()=> setInventory(inventory.map(i => i.id === item.id ? {...i, current_amount: Math.max(0, i.current_amount - 1)} : i))} title="Decrease"
+                    style={{fontWeight:'700', fontSize:'1rem', lineHeight:1}}>−</button>
+                  <button className="icon-btn" onClick={()=> setInventory(inventory.map(i => i.id === item.id ? {...i, current_amount: i.current_amount + 1} : i))} title="Increase"
+                    style={{fontWeight:'700', fontSize:'1rem', lineHeight:1}}>+</button>
+                  <button className="icon-btn" onClick={() => startEdit(item)} title="Edit"><Edit2 size={14} /></button>
+                  <button className="icon-btn" onClick={() => setInventory(inventory.filter(i => i.id !== item.id))} title="Delete"><X size={14} /></button>
                 </div>
               </div>
               <div className="asset-cat-tag">{item.category}</div>
-              <div className="progress-bg">
-                <div className={`progress-fg ${isLow ? 'bg-red' : isMedium ? 'bg-yellow' : 'bg-green'}`} style={{ width: `${Math.min(100, ratio*100)}%` }}></div>
+              <div className="progress-bg" title={`${Math.round(ratio*100)}% stocked`}>
+                <div className={`progress-fg ${barClass}`} style={{ width: `${Math.min(100, ratio * 100)}%` }}></div>
               </div>
               <div className="asset-footer">
                 <span>{item.current_amount} / {item.target_amount} {item.unit}</span>
-                {item.expiry_date && <span className="text-muted">Exp: {item.expiry_date}</span>}
+                {item.expiry_date && (
+                  <span style={{color: isExpired ? '#ef4444' : isExpiring ? '#facc15' : 'var(--text-muted)', fontWeight: (isExpired || isExpiring) ? '600' : 'normal'}}>
+                    {isExpired ? '⛔' : isExpiring ? '⏳' : ''} Exp: {item.expiry_date}
+                  </span>
+                )}
               </div>
             </div>
           )
         })}
+        {filteredInventory.length === 0 && (
+          <div style={{gridColumn:'1/-1', textAlign:'center', padding:'2rem', color:'var(--text-muted)'}}>No items match this filter.</div>
+        )}
       </div>
     </div>
-  )
+    )
+  }
 
   const renderTeam = () => (
     <div className="tab-pane animate-fade-in">
       <h2>Personnel & Comms</h2>
-      
+
       <div className="panel form-panel mb-4">
         <div className="input-row">
-          <input placeholder="Name" value={newMember.name} onChange={e => setNewMember({...newMember, name: e.target.value})} />
-          <input type="number" placeholder="Age" value={newMember.age || ''} onChange={e => setNewMember({...newMember, age: Number(e.target.value)})} />
-          <select value={newMember.role} onChange={e => setNewMember({...newMember, role: e.target.value})}>
+          <input placeholder="Name" value={newMember.name} onChange={e => setNewMember({ ...newMember, name: e.target.value })} />
+          <input type="number" placeholder="Age" value={newMember.age || ''} onChange={e => setNewMember({ ...newMember, age: Number(e.target.value) })} />
+          <select value={newMember.role} onChange={e => setNewMember({ ...newMember, role: e.target.value })}>
             <option value="family">Family (Household)</option>
             <option value="emergency_contact">Emergency Contact</option>
             <option value="useful_contact">Useful Contact</option>
           </select>
-          <input type="email" placeholder="Email" value={newMember.email} onChange={e => setNewMember({...newMember, email: e.target.value})} />
-          <input type="tel" placeholder="Phone" value={newMember.phone} onChange={e => setNewMember({...newMember, phone: e.target.value})} />
-          <input placeholder="Remarks (e.g. asthma, wheelchair)" value={newMember.remarks} onChange={e => setNewMember({...newMember, remarks: e.target.value})} />
+          <input type="email" placeholder="Email" value={newMember.email} onChange={e => setNewMember({ ...newMember, email: e.target.value })} />
+          <input type="tel" placeholder="Phone" value={newMember.phone} onChange={e => setNewMember({ ...newMember, phone: e.target.value })} />
+          <input placeholder="Remarks (e.g. asthma, wheelchair)" value={newMember.remarks} onChange={e => setNewMember({ ...newMember, remarks: e.target.value })} />
           <button className="btn-primary" onClick={addTeamMember}>Enlist</button>
         </div>
       </div>
 
       <div className="team-grid">
-        {team.map(member => (
-          <div key={member.id} className={`panel team-card role-${member.role}`}>
-            <div className="team-header">
-              <h4>{member.name} <span>({member.age})</span></h4>
-              <button className="icon-btn" onClick={() => setTeam(team.filter(i => i.id !== member.id))}>×</button>
+        {team.map(member => {
+          if (editingMemberId === member.id) {
+            return (
+              <div key={member.id} className={`panel team-card role-${member.role}`}>
+                <input style={{ marginBottom: '0.5rem' }} value={editMemberData.name} onChange={e => setEditMemberData({ ...editMemberData, name: e.target.value })} />
+                <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                  <input type="number" placeholder="Age" value={editMemberData.age || ''} onChange={e => setEditMemberData({ ...editMemberData, age: Number(e.target.value) })} />
+                  <select value={editMemberData.role} onChange={e => setEditMemberData({ ...editMemberData, role: e.target.value })}>
+                    <option value="family">Family (Household)</option>
+                    <option value="emergency_contact">Emergency Contact</option>
+                    <option value="useful_contact">Useful Contact</option>
+                  </select>
+                </div>
+                <input style={{ marginBottom: '0.5rem' }} type="email" placeholder="Email" value={editMemberData.email} onChange={e => setEditMemberData({ ...editMemberData, email: e.target.value })} />
+                <input style={{ marginBottom: '0.5rem' }} type="tel" placeholder="Phone" value={editMemberData.phone} onChange={e => setEditMemberData({ ...editMemberData, phone: e.target.value })} />
+                <input style={{ marginBottom: '0.5rem' }} placeholder="Remarks" value={editMemberData.remarks} onChange={e => setEditMemberData({ ...editMemberData, remarks: e.target.value })} />
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <button className="btn-primary" onClick={saveEditMember}>Save</button>
+                  <button className="btn-primary" style={{ backgroundColor: 'var(--panel-border)', color: 'var(--text-main)' }} onClick={cancelEditMember}>Cancel</button>
+                </div>
+              </div>
+            )
+          }
+
+          return (
+            <div key={member.id} className={`panel team-card role-${member.role}`}>
+              <div className="team-header">
+                <h4>{member.name} <span>({member.age})</span></h4>
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  <button className="icon-btn" onClick={() => startEditMember(member)} title="Edit">
+                    <Edit2 size={16} />
+                  </button>
+                  <button className="icon-btn" onClick={() => setTeam(team.filter(i => i.id !== member.id))} title="Delete">
+                    <X size={18} />
+                  </button>
+                </div>
+              </div>
+              <div className="team-role-tag">{member.role.replace('_', ' ').toUpperCase()}</div>
+              {member.email && <div className="team-contact text-muted">{member.email}</div>}
+              {member.phone && <div className="team-contact text-muted">{member.phone}</div>}
+              {member.remarks && <div className="team-contact text-yellow" style={{ fontSize: '0.8rem', marginTop: '0.5rem' }}>⚠️ {member.remarks}</div>}
             </div>
-            <div className="team-role-tag">{member.role.replace('_', ' ').toUpperCase()}</div>
-            {member.email && <div className="team-contact text-muted">{member.email}</div>}
-            {member.phone && <div className="team-contact text-muted">{member.phone}</div>}
-            {member.remarks && <div className="team-contact text-yellow" style={{fontSize: '0.8rem', marginTop: '0.5rem'}}>⚠️ {member.remarks}</div>}
-          </div>
-        ))}
+          )
+        })}
       </div>
     </div>
   )
@@ -1112,12 +1228,12 @@ function App() {
               </div>
               <span className="event-time">{ev.time}</span>
             </div>
-            
+
             {ev.expanded && (
               <div className="event-body">
                 <p><strong>Trigger/Action:</strong> {ev.userAction}</p>
                 <div>
-                  <strong>Agents Involved: </strong> 
+                  <strong>Agents Involved: </strong>
                   {ev.agentsTriggered.map(ag => (
                     <span key={ag} className="agent-trigger-tag">{ag}</span>
                   ))}
@@ -1139,10 +1255,10 @@ function App() {
   // B1 — Shelter detail cards renderer
   const SHELTER_CONTACTS = {
     'shelter': { capacity: '~300–500 persons', contact: '999 / portalbencana.nadma.gov.my', authority: 'JKM / Pihak Berkuasa Tempatan' },
-    'police':  { capacity: 'N/A', contact: '999 (Emergency) / 112', authority: 'PDRM' },
-    'fire':    { capacity: 'N/A', contact: '994 / 999', authority: 'Jabatan Bomba dan Penyelamat Malaysia' },
-    'hospital':{ capacity: 'ICU + Emergency', contact: '999 / Hospital terdekat', authority: 'Kementerian Kesihatan Malaysia (KKM)' },
-    'nadma':   { capacity: 'N/A', contact: '1800-88-2000 (NADMA)', authority: 'NADMA / JKM' },
+    'police': { capacity: 'N/A', contact: '999 (Emergency) / 112', authority: 'PDRM' },
+    'fire': { capacity: 'N/A', contact: '994 / 999', authority: 'Jabatan Bomba dan Penyelamat Malaysia' },
+    'hospital': { capacity: 'ICU + Emergency', contact: '999 / Hospital terdekat', authority: 'Kementerian Kesihatan Malaysia (KKM)' },
+    'nadma': { capacity: 'N/A', contact: '1800-88-2000 (NADMA)', authority: 'NADMA / JKM' },
   }
 
   const renderShelterCards = (locations, title, emoji) => {
@@ -1152,79 +1268,107 @@ function App() {
     }))
     if (userLocation) withDist.sort((a, b) => a._dist - b._dist)
     return (
-    <div className="panel shelter-cards-panel">
-      <h4>{emoji} {title}</h4>
-      <div className="shelter-cards-list">
-        {withDist.map((loc, i) => {
-          const isOpen = expandedShelter === `${title}-${i}`
-          const info = SHELTER_CONTACTS[loc.type] || {}
-          const isNearest = userLocation && i === 0
-          return (
-            <div key={i} className={`shelter-card type-${loc.type}${isNearest ? ' nearest' : ''}`}>
-              <div className="shelter-card-header" onClick={() => setExpandedShelter(isOpen ? null : `${title}-${i}`)}
-              >
-                <div className="shelter-card-title">
-                  <span className="shelter-type-icon">
-                    {loc.type === 'shelter' ? '🏠' : loc.type === 'police' ? '🚔' : loc.type === 'fire' ? '🚒' : loc.type === 'hospital' ? '🏥' : '🏛️'}
-                  </span>
-                  <div>
-                    <div className="shelter-name">
-                      {loc.name}
-                      {isNearest && <span className="nearest-badge">🏆 NEAREST</span>}
+      <div className="panel shelter-cards-panel">
+        <h4>{emoji} {title}</h4>
+        <div className="shelter-cards-list">
+          {withDist.map((loc, i) => {
+            const isOpen = expandedShelter === `${title}-${i}`
+            const info = SHELTER_CONTACTS[loc.type] || {}
+            const isNearest = userLocation && i === 0
+            return (
+              <div key={i} className={`shelter-card type-${loc.type}${isNearest ? ' nearest' : ''}`}>
+                <div className="shelter-card-header" onClick={() => setExpandedShelter(isOpen ? null : `${title}-${i}`)}
+                >
+                  <div className="shelter-card-title">
+                    <span className="shelter-type-icon">
+                      {loc.type === 'shelter' ? '🏠' : loc.type === 'police' ? '🚔' : loc.type === 'fire' ? '🚒' : loc.type === 'hospital' ? '🏥' : '🏛️'}
+                    </span>
+                    <div>
+                      <div className="shelter-name">
+                        {loc.name}
+                        {isNearest && <span className="nearest-badge">🏆 NEAREST</span>}
+                      </div>
+                      <div className="shelter-address text-muted">{loc.address}</div>
                     </div>
-                    <div className="shelter-address text-muted">{loc.address}</div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    {loc._dist !== null && <span className="distance-badge">{loc._dist.toFixed(2)} km</span>}
+                    {isOpen ? <ChevronUp size={16} className="text-muted" /> : <ChevronDown size={16} className="text-muted" />}
                   </div>
                 </div>
-                <div style={{display:'flex',alignItems:'center',gap:'0.5rem'}}>
-                  {loc._dist !== null && <span className="distance-badge">{loc._dist.toFixed(2)} km</span>}
-                  {isOpen ? <ChevronUp size={16} className="text-muted" /> : <ChevronDown size={16} className="text-muted" />}
-                </div>
+                {isOpen && (
+                  <div className="shelter-card-details">
+                    <div className="shelter-detail-row">
+                      <span className="text-muted">Authority</span>
+                      <span>{info.authority || '—'}</span>
+                    </div>
+                    <div className="shelter-detail-row">
+                      <span className="text-muted">Capacity</span>
+                      <span>{info.capacity || '—'}</span>
+                    </div>
+                    <div className="shelter-detail-row">
+                      <span className="text-muted">Contact</span>
+                      <a href={`tel:${info.contact?.split('/')[0]?.trim()}`} className="shelter-call-link">
+                        📞 {info.contact || '—'}
+                      </a>
+                    </div>
+                    <div className="shelter-detail-row">
+                      <span className="text-muted">GPS</span>
+                      <a
+                        href={`https://maps.google.com/?q=${loc.lat},${loc.lng}`}
+                        target="_blank" rel="noopener noreferrer"
+                        className="shelter-call-link"
+                      >
+                        📍 {loc.lat.toFixed(4)}, {loc.lng.toFixed(4)}
+                      </a>
+                    </div>
+                  </div>
+                )}
               </div>
-              {isOpen && (
-                <div className="shelter-card-details">
-                  <div className="shelter-detail-row">
-                    <span className="text-muted">Authority</span>
-                    <span>{info.authority || '—'}</span>
-                  </div>
-                  <div className="shelter-detail-row">
-                    <span className="text-muted">Capacity</span>
-                    <span>{info.capacity || '—'}</span>
-                  </div>
-                  <div className="shelter-detail-row">
-                    <span className="text-muted">Contact</span>
-                    <a href={`tel:${info.contact?.split('/')[0]?.trim()}`} className="shelter-call-link">
-                      📞 {info.contact || '—'}
-                    </a>
-                  </div>
-                  <div className="shelter-detail-row">
-                    <span className="text-muted">GPS</span>
-                    <a
-                      href={`https://maps.google.com/?q=${loc.lat},${loc.lng}`}
-                      target="_blank" rel="noopener noreferrer"
-                      className="shelter-call-link"
-                    >
-                      📍 {loc.lat.toFixed(4)}, {loc.lng.toFixed(4)}
-                    </a>
-                  </div>
-                </div>
-              )}
-            </div>
-          )
-        })}
+            )
+          })}
+        </div>
       </div>
-    </div>
-  )}
+    )
+  }
 
   const renderThreatMap = () => (
     <div className="tab-pane animate-fade-in">
       <div className="dash-header">
         <h2>🗺️ Threat Map — Evacuation Advisory</h2>
-        <div style={{display:'flex', gap:'0.75rem', flexWrap:'wrap', alignItems:'center'}}>
+        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
           {/* B4 — Disaster Type Selector */}
-          <div className="live-status-badge" style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', background: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', borderRadius: '12px', fontWeight: 'bold', fontSize: '0.9rem', border: '1px solid rgba(239, 68, 68, 0.3)' }}>
-            <span style={{ width: '8px', height: '8px', background: '#ef4444', borderRadius: '50%', boxShadow: '0 0 8px #ef4444', animation: 'pulse 2s infinite' }}></span>
-            LIVE AUTONOMOUS MONITORING
+          <div className="disaster-selector">
+            <label className="text-muted" style={{ fontSize: '0.8rem', fontWeight: '600' }}>SCENARIO</label>
+            <select
+              value={selectedDisasterType}
+              onChange={e => setSelectedDisasterType(e.target.value)}
+              style={{ minWidth: '140px' }}
+            >
+              <option value="auto">🔴 Auto (Live)</option>
+              <option value="flood">🌊 Flood</option>
+              <option value="storm">⛈️ Storm</option>
+              <option value="haze">🌫️ Haze</option>
+              <option value="fire">🔥 Fire</option>
+              <option value="earthquake">🌏 Earthquake</option>
+            </select>
           </div>
+          <button
+            className="btn-primary"
+            onClick={() => runEvacuationAdvisory(false)}
+            disabled={evacLoading}
+          >
+            {evacLoading ? '⟳ Generating...' : '⚡ Run Advisory'}
+          </button>
+          {evacAdvisory && (
+            <button
+              className="btn-sms"
+              onClick={() => runEvacuationAdvisory(true)}
+              disabled={evacLoading}
+            >
+              📱 Send SMS Alerts
+            </button>
+          )}
         </div>
       </div>
       {locationError && (
@@ -1234,7 +1378,7 @@ function App() {
         <div className="location-info-bar">
           📍 Your position: <strong>{userLocation.lat.toFixed(5)}, {userLocation.lng.toFixed(5)}</strong>
           {evacAdvisory && (() => {
-            const allLocs = [...(evacAdvisory.shelter_locations||[]), ...(evacAdvisory.enforcement_agencies||[])]
+            const allLocs = [...(evacAdvisory.shelter_locations || []), ...(evacAdvisory.enforcement_agencies || [])]
             let nearest = null, minDist = Infinity
             allLocs.forEach(loc => { const d = haversineKm(userLocation.lat, userLocation.lng, loc.lat, loc.lng); if (d < minDist) { minDist = d; nearest = loc } })
             return nearest ? <span className="nearest-summary"> · 🏆 Nearest: <strong>{nearest.name}</strong> ({minDist.toFixed(2)} km)</span> : null
@@ -1245,38 +1389,43 @@ function App() {
       {!evacAdvisory && !evacLoading && (
         <>
           <div className="panel evac-empty-state">
-            <div style={{fontSize:'4rem', marginBottom:'1rem'}}>🗺️</div>
-            <h3>Autonomous System Standby</h3>
-            <p className="text-muted" style={{maxWidth:'500px', margin:'0 auto 0.75rem', lineHeight:'1.6'}}>
-              Awaiting MET Malaysia triggers. When a threat is detected, the system will automatically generate an evacuation plan with shelter locations,
+            <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>🗺️</div>
+            <h3>Evacuation Advisor Ready</h3>
+            <p className="text-muted" style={{ maxWidth: '500px', margin: '0 auto 0.75rem', lineHeight: '1.6' }}>
+              Click <strong>Run Advisory</strong> to generate a real-time evacuation plan with shelter locations,
               enforcement agencies, safe routes, and avoidance zones —{' '}
               {userRegionDisplay
-                ? <strong style={{color:'var(--info)'}}>tailored dynamically for {userRegionDisplay.split(',')[0]}</strong>
-                : 'based on your live GPS location anywhere in Malaysia'}.
+                ? <strong style={{ color: 'var(--info)' }}>tailored for {userRegionDisplay.split(',')[0]}</strong>
+                : 'for your current location across all of Malaysia'}.
             </p>
+            {!userRegionDisplay && (
+              <p className="text-muted" style={{ fontSize: '0.8rem', margin: '0 auto', maxWidth: '400px' }}>
+                💡 Click <strong>Locate Me</strong> first for a location-specific advisory (Sabah, Sarawak, or any Malaysian state).
+              </p>
+            )}
           </div>
 
           {/* Official Malaysian Data Sources Panel */}
           <div className="panel gov-sources-panel">
-            <h4 style={{marginTop:0, marginBottom:'1rem', color:'var(--info)', letterSpacing:'1px', fontSize:'0.85rem', textTransform:'uppercase'}}>
+            <h4 style={{ marginTop: 0, marginBottom: '1rem', color: 'var(--info)', letterSpacing: '1px', fontSize: '0.85rem', textTransform: 'uppercase' }}>
               🏛️ Official Malaysian Emergency Data Sources
             </h4>
             <div className="gov-sources-grid">
               {[
-                { name:'NADMA Portal Bencana', desc:'Live disaster & evacuation centre status', url:'https://portalbencana.nadma.gov.my', badge:'LIVE', color:'var(--danger)' },
-                { name:'JPS Water Level', desc:'Real-time river & flood gauge data', url:'https://water.jps.gov.my', badge:'LIVE', color:'var(--danger)' },
-                { name:'data.gov.my', desc:'MET weather, warnings & open datasets', url:'https://api.data.gov.my', badge:'API', color:'var(--info)' },
-                { name:'JKM Welfare', desc:'Welfare shelters & aid coordination', url:'https://www.jkm.gov.my', badge:'GOV', color:'var(--primary)' },
-                { name:'DOSM / Banci', desc:'Census, population & demographic data', url:'https://www.dosm.gov.my', badge:'GOV', color:'var(--primary)' },
-                { name:'KDN', desc:'Home Affairs — enforcement & security ops', url:'https://www.kdn.gov.my', badge:'GOV', color:'var(--primary)' },
-                { name:'MySikap / JPJ', desc:'Road conditions & transport advisories', url:'https://www.jpj.gov.my', badge:'GOV', color:'var(--primary)' },
-                { name:'Bomba Malaysia', desc:'Fire & rescue station locator', url:'https://www.bomba.gov.my', badge:'GOV', color:'var(--warning)' },
+                { name: 'NADMA Portal Bencana', desc: 'Live disaster & evacuation centre status', url: 'https://portalbencana.nadma.gov.my', badge: 'LIVE', color: 'var(--danger)' },
+                { name: 'JPS Water Level', desc: 'Real-time river & flood gauge data', url: 'https://water.jps.gov.my', badge: 'LIVE', color: 'var(--danger)' },
+                { name: 'data.gov.my', desc: 'MET weather, warnings & open datasets', url: 'https://api.data.gov.my', badge: 'API', color: 'var(--info)' },
+                { name: 'JKM Welfare', desc: 'Welfare shelters & aid coordination', url: 'https://www.jkm.gov.my', badge: 'GOV', color: 'var(--primary)' },
+                { name: 'DOSM / Banci', desc: 'Census, population & demographic data', url: 'https://www.dosm.gov.my', badge: 'GOV', color: 'var(--primary)' },
+                { name: 'KDN', desc: 'Home Affairs — enforcement & security ops', url: 'https://www.kdn.gov.my', badge: 'GOV', color: 'var(--primary)' },
+                { name: 'MySikap / JPJ', desc: 'Road conditions & transport advisories', url: 'https://www.jpj.gov.my', badge: 'GOV', color: 'var(--primary)' },
+                { name: 'Bomba Malaysia', desc: 'Fire & rescue station locator', url: 'https://www.bomba.gov.my', badge: 'GOV', color: 'var(--warning)' },
               ].map(s => (
                 <a key={s.name} href={s.url} target="_blank" rel="noreferrer" className="gov-source-card">
-                  <span className="gov-source-badge" style={{background:`${s.color}22`, color:s.color, borderColor:`${s.color}44`}}>{s.badge}</span>
+                  <span className="gov-source-badge" style={{ background: `${s.color}22`, color: s.color, borderColor: `${s.color}44` }}>{s.badge}</span>
                   <div className="gov-source-name">{s.name}</div>
                   <div className="gov-source-desc">{s.desc}</div>
-                  <div className="gov-source-url">{s.url.replace('https://','')}</div>
+                  <div className="gov-source-url">{s.url.replace('https://', '')}</div>
                 </a>
               ))}
             </div>
@@ -1296,7 +1445,7 @@ function App() {
       {evacAdvisory && !evacLoading && (
         <div className="threat-map-layout">
           <div className="panel threat-map-panel">
-            <div id="leaflet-threat-map" style={{width:'100%', height:'450px', borderRadius:'8px', overflow:'hidden'}}></div>
+            <div id="leaflet-threat-map" style={{ width: '100%', height: '450px', borderRadius: '8px', overflow: 'hidden' }}></div>
             <div className="map-legend">
               <span>🏠 Shelter</span>
               <span>🚔 Police</span>
@@ -1310,7 +1459,7 @@ function App() {
             <div className="panel sms-preview-panel">
               <h4>📱 SMS Alert Text</h4>
               <div className="sms-bubble">{evacAdvisory.sms_alert_text}</div>
-              <span className="text-muted" style={{fontSize:'0.75rem'}}>
+              <span className="text-muted" style={{ fontSize: '0.75rem' }}>
                 {evacAdvisory.sms_alert_text?.length}/160 characters
               </span>
               {evacAdvisory.sms_results?.length > 0 && (
@@ -1329,7 +1478,7 @@ function App() {
               {evacAdvisory.routes_to_take?.map((r, i) => (
                 <div key={i} className="route-item">
                   <span className="route-num tech-font">{i + 1}</span>
-                  <span style={{fontSize:'0.85rem'}}>{r}</span>
+                  <span style={{ fontSize: '0.85rem' }}>{r}</span>
                 </div>
               ))}
             </div>
@@ -1343,7 +1492,7 @@ function App() {
 
             <div className="panel">
               <h4>🧠 Advisor Reasoning</h4>
-              <p className="text-muted" style={{fontSize:'0.85rem', lineHeight:'1.6'}}>{evacAdvisory.reasoning}</p>
+              <p className="text-muted" style={{ fontSize: '0.85rem', lineHeight: '1.6' }}>{evacAdvisory.reasoning}</p>
             </div>
           </div>
 
@@ -1357,6 +1506,66 @@ function App() {
     </div>
   )
 
+  const renderSettings = () => (
+    <div className="tab-pane animate-fade-in">
+      <h2>Preferences & Configuration</h2>
+
+      <div className="panel mb-4" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+        <div>
+          <h3>📍 Location Services</h3>
+          <p className="text-muted" style={{ fontSize: '0.85rem', marginBottom: '1rem' }}>
+            Allow MyResilience to automatically access your browser's location. This is required for proximity-based weather alerts and accurate Threat Map routing.
+          </p>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={settings.locationTracking}
+              onChange={e => setSettings({ ...settings, locationTracking: e.target.checked })}
+              style={{ width: 'auto', minWidth: 'auto', transform: 'scale(1.2)' }}
+            />
+            <span style={{ fontWeight: '500' }}>Enable GPS Location Tracking</span>
+          </label>
+        </div>
+
+        <div style={{ borderTop: '1px solid var(--panel-border)', paddingTop: '1.5rem' }}>
+          <h3>✉️ Email Notifications</h3>
+          <p className="text-muted" style={{ fontSize: '0.85rem', marginBottom: '1rem' }}>
+            Configure which events trigger an automated email dispatch to your designated contact address.
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={settings.emailPreparedness}
+                onChange={e => setSettings({ ...settings, emailPreparedness: e.target.checked })}
+                style={{ width: 'auto', minWidth: 'auto', transform: 'scale(1.2)' }}
+              />
+              <span style={{ fontWeight: '500' }}>Preparedness Audits (Inventory Gaps)</span>
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={settings.emailAdvisories}
+                onChange={e => setSettings({ ...settings, emailAdvisories: e.target.checked })}
+                style={{ width: 'auto', minWidth: 'auto', transform: 'scale(1.2)' }}
+              />
+              <span style={{ fontWeight: '500' }}>Weather & Threat Advisories (Warning Level)</span>
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={settings.emailEmergency}
+                onChange={e => setSettings({ ...settings, emailEmergency: e.target.checked })}
+                style={{ width: 'auto', minWidth: 'auto', transform: 'scale(1.2)' }}
+              />
+              <span style={{ fontWeight: '500' }}>Emergency Evacuation Alerts (Critical Level)</span>
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+
   return (
     <div className="app-container">
       <aside className={`sidebar ${isSidebarOpen ? 'open' : 'closed'}`}>
@@ -1364,7 +1573,7 @@ function App() {
           <ShieldAlert className="logo-icon" />
           {isSidebarOpen && <h1>MyResilience</h1>}
         </div>
-        
+
         <nav className="sidebar-nav">
           <button className={activeTab === 'dashboard' ? 'active' : ''} onClick={() => setActiveTab('dashboard')}>
             <Radar className="nav-icon" /> {isSidebarOpen && 'Dashboard'}
@@ -1381,6 +1590,9 @@ function App() {
           <button className={activeTab === 'threatmap' ? 'active' : ''} onClick={() => setActiveTab('threatmap')}>
             <Map className="nav-icon" /> {isSidebarOpen && 'Threat Map'}
           </button>
+          <button className={activeTab === 'settings' ? 'active' : ''} onClick={() => setActiveTab('settings')}>
+            <Settings className="nav-icon" /> {isSidebarOpen && 'Settings'}
+          </button>
         </nav>
         <button className="sidebar-toggle-btn" onClick={() => setSidebarOpen(!isSidebarOpen)} title={isSidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}>
           {isSidebarOpen ? <ChevronLeft className="nav-icon" /> : <Menu className="nav-icon" />}
@@ -1393,6 +1605,7 @@ function App() {
         {activeTab === 'team' && renderTeam()}
         {activeTab === 'activity' && renderActivity()}
         {activeTab === 'threatmap' && renderThreatMap()}
+        {activeTab === 'settings' && renderSettings()}
       </main>
     </div>
   )
