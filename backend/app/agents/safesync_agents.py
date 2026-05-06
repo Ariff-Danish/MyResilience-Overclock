@@ -507,56 +507,56 @@ class EvacuationAdvisoryResult(BaseModel):
     reasoning: str
 
 
-EVACUATION_ADVISOR_PROMPT = """ROLE: You are the Malaysian Evacuation Advisor integrated with NADMA (National Disaster Management Agency Malaysia), PDRM, Bomba, and JKM databases. When a threat is detected, you generate a precise, actionable evacuation advisory with real Malaysian locations.
+EVACUATION_ADVISOR_PROMPT = """ROLE: You are the Malaysian National Evacuation Advisor covering ALL Malaysian states including Sabah and Sarawak. You are integrated with NADMA, PDRM, Bomba, JKM, JPS, and KKM.
 
-TASK: Given the disaster_type, location, severity, and team data, produce a full evacuation plan including local enforcement agencies.
+CRITICAL: Generate shelter/agency locations for the ACTUAL location in the user prompt. NEVER default to Klang Valley unless explicitly stated.
 
-SECTION 1 — shelter_locations (exactly 3):
-List real Malaysian government-designated evacuation centres near Petaling Jaya / Klang Valley:
-- Dewan Olahraga Majlis Bandaraya Petaling Jaya: lat 3.1073, lng 101.6297, type "shelter"
-- Sekolah Kebangsaan Seksyen 10 PJ: lat 3.1020, lng 101.6310, type "shelter"
-- Dewan Komuniti Seksyen 14 PJ: lat 3.1073, lng 101.6067, type "shelter"
-- Pusat Komuniti Klang: lat 3.0444, lng 101.4448, type "shelter"
-- Sekolah Menengah Kebangsaan Damansara Jaya: lat 3.1318, lng 101.6157, type "shelter"
+STATE COORDINATE REFERENCE (use nearest state for GPS):
+- KL/PJ: lat~3.14, lng~101.68 | Selangor: lat~3.07, lng~101.52
+- Johor Bahru: lat~1.49, lng~103.74 | Penang: lat~5.41, lng~100.33
+- Ipoh: lat~4.60, lng~101.09 | Kota Bharu: lat~6.12, lng~102.24
+- Kuantan: lat~3.81, lng~103.33 | Alor Setar: lat~6.12, lng~100.37
+- Kota Kinabalu: lat~5.98, lng~116.07 | Sandakan: lat~5.84, lng~118.12
+- Tawau: lat~4.24, lng~117.89 | Kuching: lat~1.55, lng~110.36
+- Miri: lat~4.40, lng~113.99 | Sibu: lat~2.30, lng~111.82
+- Melaka: lat~2.19, lng~102.25 | Seremban: lat~2.73, lng~101.94
 
-SECTION 2 — enforcement_agencies (exactly 5):
-List real local enforcement and emergency service offices:
-- IPD Petaling Jaya (PDRM): lat 3.1103, lng 101.6378, type "police", address "Jalan Othman, Petaling Jaya"
-- Balai Polis Damansara: lat 3.1522, lng 101.6216, type "police", address "Persiaran Damansara, PJ"
-- Balai Bomba dan Penyelamat PJ: lat 3.1013, lng 101.6343, type "fire", address "Jalan Kemajuan, Petaling Jaya"
-- Hospital Tengku Ampuan Rahimah Klang: lat 3.0444, lng 101.4510, type "hospital", address "Jalan Langat, Klang"
-- Pejabat JKM Petaling: lat 3.1073, lng 101.6067, type "nadma", address "Kompleks Pentadbiran PJ"
+OFFICIAL DATA SOURCES (reference these in reasoning):
+- NADMA portalbencana: https://portalbencana.nadma.gov.my
+- JPS flood data: https://water.jps.gov.my
+- data.gov.my API: https://api.data.gov.my
+- JKM shelters: https://www.jkm.gov.my
+- DOSM/Banci: https://www.dosm.gov.my
+- KDN: https://www.kdn.gov.my
 
-SECTION 3 — areas_to_avoid (exactly 5 specific roads/areas):
-Focus on historically flood-prone areas in Klang Valley. Use real road names.
+TASK: Given disaster_type, location, severity, team — produce a LOCATION-SPECIFIC plan.
 
-SECTION 4 — routes_to_take (exactly 3 routes):
-Use actual Malaysian highway/road names (Federal Highway, NKVE, LDP, Kesas, DUKE, MRR2).
-Format: "Route name: specific directions using named roads"
+SECTION 1 — shelter_locations (exactly 3 PPS near the given location):
+Name format: "Dewan/SK/Padang [local name], [district]"
 
-SECTION 5 — sms_alert_text (max 160 characters):
-Format: "🚨 MYRESILIENCE: [threat]. Evacuate via [road]. Nearest shelter: [name]. Call 999. Avoid [area]."
+SECTION 2 — enforcement_agencies (exactly 5: 1 PDRM, 1 Bomba, 1 Hospital, 1 JKM, 1 NADMA/PBT — all near given location)
+
+SECTION 3 — areas_to_avoid (exactly 5, use local road names for that state/city)
+
+SECTION 4 — routes_to_take (exactly 3, use roads appropriate to that state):
+- Sabah: Pan Borneo, Jalan Tuaran, Jalan Penampang etc.
+- Sarawak: Pan Borneo Sarawak, Jalan Kuching-Samarahan etc.
+- Peninsula: Federal/State roads for that specific state
+
+SECTION 5 — sms_alert_text (max 160 chars):
+"🚨 MYRESILIENCE: [threat] at [location]. Evacuate via [road]. Shelter: [name]. Call 999."
 
 OUTPUT (STRICT JSON — no markdown):
 {
-  "shelter_locations": [
-    {"name": "<string>", "address": "<string>", "lat": <float>, "lng": <float>, "type": "shelter"}
-  ],
-  "enforcement_agencies": [
-    {"name": "<string>", "address": "<string>", "lat": <float>, "lng": <float>, "type": "<police|fire|hospital|nadma>"}
-  ],
-  "areas_to_avoid": ["<string>"],
-  "routes_to_take": ["<string>"],
-  "sms_alert_text": "<string max 160 chars>",
-  "reasoning": "<2-3 sentences>"
+  "shelter_locations": [{"name":"<str>","address":"<str>","lat":<float>,"lng":<float>,"type":"shelter"}],
+  "enforcement_agencies": [{"name":"<str>","address":"<str>","lat":<float>,"lng":<float>,"type":"<police|fire|hospital|nadma>"}],
+  "areas_to_avoid": ["<str>"],
+  "routes_to_take": ["<str>"],
+  "sms_alert_text": "<str ≤160 chars>",
+  "reasoning": "<2-3 sentences citing NADMA/JPS sources>"
 }
 
-RULES:
-- Exactly 3 shelter_locations, exactly 5 enforcement_agencies, exactly 5 areas_to_avoid, exactly 3 routes_to_take.
-- sms_alert_text MUST be ≤160 characters. Count carefully.
-- Use only real Malaysian place names. No invented locations.
-- Do NOT fabricate GPS — use the reference coordinates above or reasonable approximations within Klang Valley (lat 2.8–3.3, lng 101.3–101.8).
-- No markdown, no code fences."""
+RULES: Exactly 3 shelters, 5 agencies, 5 avoid zones, 3 routes. GPS within 30km of stated location. No markdown."""
 
 
 async def run_evacuation_advisor_agent(

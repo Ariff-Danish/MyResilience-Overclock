@@ -72,6 +72,9 @@ function App() {
   // Distant alerts (threats in other regions, not affecting user)
   const [distantAlerts, setDistantAlerts] = useState([])
   const [userRegionDisplay, setUserRegionDisplay] = useState(null)
+  // Live clock
+  const [liveTime, setLiveTime] = useState(new Date())
+  useEffect(() => { const t = setInterval(() => setLiveTime(new Date()), 1000); return () => clearInterval(t) }, [])
   
   // Grouped Activity Log
   const [activityEvents, setActivityEvents] = useState([
@@ -572,13 +575,26 @@ function App() {
   const renderDashboard = () => (
     <div className="tab-pane animate-fade-in">
       <div className="dash-header">
-        <h2>Command Dashboard</h2>
-        <div className="demo-toggle">
-          <label>Live Demo Mode</label>
-          <label className="switch">
-            <input type="checkbox" checked={demoMode} onChange={e => setDemoMode(e.target.checked)} />
-            <span className="slider round"></span>
-          </label>
+        <div style={{display:'flex', alignItems:'center', gap:'1rem'}}>
+          <h2>⚡ COMMAND DASHBOARD</h2>
+          <span className="header-status-badge">
+            {liveWeather?.alerts?.length > 0 ? '🔴 THREAT ACTIVE' : '🟢 NOMINAL'}
+          </span>
+        </div>
+        <div style={{display:'flex', alignItems:'center', gap:'1.25rem', flexWrap:'wrap'}}>
+          {userRegionDisplay && (
+            <span className="header-location-pill">📍 {userRegionDisplay.split(',')[0]}</span>
+          )}
+          <span className="header-clock tech-font">
+            {liveTime.toLocaleTimeString('en-MY', {hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false})} MYT
+          </span>
+          <div className="demo-toggle">
+            <label>DEMO</label>
+            <label className="switch">
+              <input type="checkbox" checked={demoMode} onChange={e => setDemoMode(e.target.checked)} />
+              <span className="slider round"></span>
+            </label>
+          </div>
         </div>
       </div>
 
