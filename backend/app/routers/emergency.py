@@ -16,6 +16,7 @@ from app.agents.safesync_agents import (
     PreparednessBriefingResult,
 )
 from app.agents.sms_tools import send_bulk_sms
+from app.agents.gmail_tools import send_email
 from app.utils.geo import (
     haversine_km,
     parse_location_from_warning_text,
@@ -666,3 +667,118 @@ async def generate_pace(req: PreparednessBriefingRequest):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# /api/distress_signal
+# One-tap emergency broadcast. Sends SMS + Email to ALL team contacts
+# with GPS coordinates, Google Maps link, and disaster context.
+# ──────────────────────────────────────────────────────────────────────────────
+class DistressSignalRequest(BaseModel):
+    team: List[TeamMember] = []
+    user_lat: Optional[float] = None
+    user_lng: Optional[float] = None
+    location_name: str = "Unknown Location"
+    disaster_type: str = "emergency"
+    custom_message: Optional[str] = None
+
+
+@router.post("/distress_signal")
+async def distress_signal(req: DistressSignalRequest):
+    """
+    Broadcast a distress signal to all team contacts.
+    Sends SMS (Twilio) + Email (Gmail) with GPS coordinates and Google Maps link.
+    Returns per-contact delivery report.
+    """
+    from datetime import datetime
+    import pytz
+
+    # ── Resolve location display ───────────────────────────────────────────
+    has_coords = req.user_lat is not None and req.user_lng is not None
+    coords_str = f"{req.user_lat:.6f}, {req.user_lng:.6f}" if has_coords else "Coordinates unavailable"
+    maps_url   = f"https://maps.google.com/?q={req.user_lat},{req.user_lng}" if has_coords else "https://maps.google.com"
+    waze_url   = f"https://waze.com/ul?ll={req.user_lat},{req.user_lng}&navigate=yes" if has_coords else ""
+
+    try:
+        myt = pytz.timezone("Asia/Kuala_Lumpur")
+        timestamp_myt = datetime.now(myt).strftime("%d %b %Y %H:%M:%S MYT")
+    except Exception:
+        timestamp_myt = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ (UTC)")
+
+    disaster_label = req.disaster_type.replace("_", " ").upper()
+    household_names = ", ".join(m.name for m in req.team) if req.team else "Unknown"
+
+    # ── Compose SMS (160 chars max per segment, keep tight) ─────────────────────
+    sms_body = (
+        f"🆘 DISTRESS SIGNAL | {timestamp_myt}\n"
+        f"DISASTER: {disaster_label}\n"
+        f"LOCATION: {req.location_name}\n"
+        f"COORDS: {coords_str}\n"
+        f"MAP: {maps_url}\n"
+        f"HOUSEHOLD: {household_names[:40]}\n"
+        f"CALL 999 (Police) | 994 (Bomba) | 1800-88-2000 (NADMA)"
+    )
+    if req.custom_message:
+        sms_body += f"\nMSG: {req.custom_message[:80]}"
+
+    # ── Compose Email (full detail) ──────────────────────────────────────────
+    email_subject = f"🆘 DISTRESS SIGNAL — {req.location_name} — {disaster_label}"
+    email_body = f"""══════════════════════════════════════════════════
+🆘  MYRESILIENCE DISTRESS SIGNAL — EMERGENCY
+══════════════════════════════════════════════════
+
+TIME (MYT)   : {timestamp_myt}
+DISASTER     : {disaster_label}
+LOCATION     : {req.location_name}
+COORDINATES  : {coords_str}
+HOUSEHOLD    : {household_names}
+
+► GOOGLE MAPS  : {maps_url}
+► WAZE         : {waze_url}
+
+──────────────────────────────────────────────────
+TEAM MEMBERS:
+{chr(10).join(f'  - {m.name} (Age {m.age}) | {m.role} | 📱 {m.phone or "N/A"} | 📧 {m.email or "N/A"}' for m in req.team)}
+──────────────────────────────────────────────────
+{f'CUSTOM MESSAGE: {req.custom_message}' if req.custom_message else ''}
+══════════════════════════════════════════════════
+EMERGENCY CONTACTS (MALAYSIA):
+  • Police / Rescue : 999
+  • Bomba (Fire)    : 994
+  • Ambulans        : 991  
+  • NADMA           : 1800-88-2000
+  • JPS Flood       : 03-8090 8571
+══════════════════════════════════════════════════
+This signal was sent automatically by MyResilience SafeSync AI.
+If this is a mistake, please disregard and contact the household.
+══════════════════════════════════════════════════"""
+
+    # ── Dispatch SMS to all phone numbers ─────────────────────────────────────
+    phone_numbers = [m.phone.strip() for m in req.team if m.phone and m.phone.strip()]
+    sms_results = send_bulk_sms(phone_numbers, sms_body) if phone_numbers else []
+
+    # ── Dispatch Email to all email addresses ──────────────────────────────
+    email_addresses = [m.email.strip() for m in req.team if m.email and m.email.strip()]
+    email_results = []
+    for addr in email_addresses:
+        result = send_email(addr, email_subject, email_body)
+        email_results.append({"email": addr, **result})
+
+    sms_sent    = sum(1 for r in sms_results   if r.get("status") == "sent")
+    email_sent  = sum(1 for r in email_results if r.get("status") == "sent")
+    total_contacts = len(phone_numbers) + len(email_addresses)
+
+    return {
+        "status": "dispatched",
+        "timestamp": timestamp_myt,
+        "location_name": req.location_name,
+        "coords": coords_str,
+        "maps_url": maps_url,
+        "waze_url": waze_url,
+        "sms_results": sms_results,
+        "email_results": email_results,
+        "sms_sent": sms_sent,
+        "email_sent": email_sent,
+        "total_contacts": total_contacts,
+        "message_preview": sms_body[:200],
+    }

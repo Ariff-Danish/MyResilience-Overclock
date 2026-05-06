@@ -23,6 +23,13 @@ function App() {
   const [showAddForm, setShowAddForm] = useState(false)
   const [filterMode, setFilterMode] = useState('all') // all | low_stock | expiring
   const [showAddMember, setShowAddMember] = useState(false)
+  // Distress Signal
+  const [distressModal, setDistressModal] = useState(false)
+  const [distressCountdown, setDistressCountdown] = useState(5)
+  const [distressLoading, setDistressLoading] = useState(false)
+  const [distressReport, setDistressReport] = useState(null)
+  const [distressCustomMsg, setDistressCustomMsg] = useState('')
+  const distressCountdownRef = useRef(null)
 
   // Core State
   const DEFAULT_INVENTORY = [
@@ -1911,6 +1918,143 @@ function App() {
 
   return (
     <div className="app-container">
+      {/* ════════ DISTRESS SIGNAL MODAL ════════ */}
+      {distressModal && (
+        <div className="distress-overlay" onClick={() => { if (!distressLoading) { clearInterval(distressCountdownRef.current); setDistressModal(false); setDistressCountdown(5); setDistressReport(null); }}}>
+          <div className="distress-modal" onClick={e => e.stopPropagation()}>
+            {!distressReport ? (
+              <>
+                <div className="distress-modal-header">
+                  <span style={{fontSize:'2rem'}}>🆘</span>
+                  <div>
+                    <div style={{fontSize:'1.1rem', fontWeight:'800', color:'#fca5a5', letterSpacing:'1px'}}>DISTRESS SIGNAL</div>
+                    <div style={{fontSize:'0.78rem', color:'var(--text-muted)'}}>Broadcasting to all emergency contacts</div>
+                  </div>
+                </div>
+
+                <div className="distress-contacts-preview">
+                  <div style={{fontSize:'0.75rem', fontWeight:'700', color:'var(--text-muted)', marginBottom:'0.5rem', letterSpacing:'1px', textTransform:'uppercase'}}>Will Notify:</div>
+                  {team.filter(m => m.phone || m.email).length === 0 ? (
+                    <div style={{color:'var(--warning)', fontSize:'0.82rem'}}>⚠️ No phone/email contacts in roster. Add team members first.</div>
+                  ) : team.filter(m => m.phone || m.email).map(m => (
+                    <div key={m.id} className="distress-contact-item">
+                      <span style={{fontWeight:'700', color:'var(--text-main)'}}>{m.name}</span>
+                      <span style={{color:'var(--text-muted)', fontSize:'0.75rem'}}>{m.phone && `📱 ${m.phone}`} {m.email && `📧 ${m.email}`}</span>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="distress-location">
+                  <span style={{fontSize:'0.75rem', color:'var(--text-muted)', textTransform:'uppercase', letterSpacing:'1px'}}>Location:</span>
+                  <span style={{color:'var(--primary)', fontWeight:'700', fontSize:'0.85rem'}}>
+                    {userLocation ? `📍 ${userRegionDisplay || 'GPS Located'} (${userLocation.lat.toFixed(4)}, ${userLocation.lng.toFixed(4)})` : '⚠️ No GPS — enable location tracking for precise coordinates'}
+                  </span>
+                </div>
+
+                <textarea
+                  className="distress-message-input"
+                  placeholder="Optional: Add a custom message (e.g. 'Trapped on 2nd floor, water rising')"
+                  value={distressCustomMsg}
+                  onChange={e => setDistressCustomMsg(e.target.value)}
+                  rows={2}
+                  maxLength={120}
+                />
+
+                <div className="distress-countdown-bar">
+                  <div style={{flex:1, background:'rgba(244,63,94,0.15)', borderRadius:'999px', height:'6px', overflow:'hidden'}}>
+                    <div style={{height:'100%', background:'#f43f5e', borderRadius:'999px', width:`${(distressCountdown/5)*100}%`, transition:'width 1s linear'}} />
+                  </div>
+                  <span style={{fontSize:'0.9rem', fontWeight:'800', color:'#fca5a5', minWidth:'2rem', textAlign:'right'}}>{distressCountdown}s</span>
+                </div>
+
+                <div style={{display:'flex', gap:'0.75rem'}}>
+                  <button className="distress-cancel-btn"
+                    onClick={() => { clearInterval(distressCountdownRef.current); setDistressModal(false); setDistressCountdown(5); }}
+                  >✕ Cancel</button>
+                  <button className="distress-send-btn"
+                    disabled={distressLoading || distressCountdown > 0}
+                    onClick={async () => {
+                      setDistressLoading(true)
+                      try {
+                        const res = await fetch(`${API_URL}/api/distress_signal`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            team,
+                            user_lat: userLocation?.lat || null,
+                            user_lng: userLocation?.lng || null,
+                            location_name: userRegionDisplay || 'Unknown Location',
+                            disaster_type: selectedDisasterType !== 'auto' ? selectedDisasterType : (recentAlert?.weather_disaster_type || 'emergency'),
+                            custom_message: distressCustomMsg || null
+                          })
+                        })
+                        const data = await res.json()
+                        setDistressReport(data)
+                        logEvent('🆘 Distress Signal Sent', 'Panic Button', ['Distress Broadcaster'], `SMS: ${data.sms_sent || 0} sent, Email: ${data.email_sent || 0} sent. Coords: ${data.coords}`, 'error')
+                      } catch (err) {
+                        setDistressReport({ status: 'error', error: err.message })
+                      }
+                      setDistressLoading(false)
+                    }}
+                  >
+                    {distressLoading ? '📡 Sending...' : distressCountdown > 0 ? `⏳ Sending in ${distressCountdown}s` : '🆘 SEND NOW'}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="distress-modal-header">
+                  <span style={{fontSize:'2rem'}}>{distressReport.status === 'dispatched' ? '✅' : '❌'}</span>
+                  <div>
+                    <div style={{fontSize:'1.1rem', fontWeight:'800', color: distressReport.status === 'dispatched' ? '#4ade80' : '#fca5a5', letterSpacing:'1px'}}>
+                      {distressReport.status === 'dispatched' ? 'SIGNAL DISPATCHED' : 'DISPATCH FAILED'}
+                    </div>
+                    <div style={{fontSize:'0.78rem', color:'var(--text-muted)'}}>{distressReport.timestamp}</div>
+                  </div>
+                </div>
+                {distressReport.status === 'dispatched' && (
+                  <div style={{display:'flex', flexDirection:'column', gap:'0.5rem'}}>
+                    <div className="distress-report-row">
+                      <span>📱 SMS Sent</span><span style={{color:'var(--primary)', fontWeight:'700'}}>{distressReport.sms_sent}/{distressReport.sms_results?.length || 0}</span>
+                    </div>
+                    <div className="distress-report-row">
+                      <span>📧 Email Sent</span><span style={{color:'var(--info)', fontWeight:'700'}}>{distressReport.email_sent}/{distressReport.email_results?.length || 0}</span>
+                    </div>
+                    <div className="distress-report-row">
+                      <span>📍 Coordinates</span><span style={{color:'var(--text-muted)', fontSize:'0.75rem', fontFamily:'monospace'}}>{distressReport.coords}</span>
+                    </div>
+                    <a href={distressReport.maps_url} target="_blank" rel="noreferrer" className="distress-maps-link">🗺️ Open in Google Maps ↗</a>
+                    {distressReport.waze_url && <a href={distressReport.waze_url} target="_blank" rel="noreferrer" className="distress-maps-link" style={{background:'rgba(56,189,248,0.1)', borderColor:'rgba(56,189,248,0.3)', color:'var(--info)'}}>🚗 Open in Waze ↗</a>}
+                  </div>
+                )}
+                {distressReport.error && <div style={{color:'#fca5a5', fontSize:'0.83rem'}}>Error: {distressReport.error}</div>}
+                <div style={{display:'flex', gap:'0.75rem', marginTop:'0.5rem'}}>
+                  <button className="distress-cancel-btn" style={{flex:1}} onClick={() => { setDistressModal(false); setDistressReport(null); setDistressCountdown(5); setDistressCustomMsg(''); }}>Close</button>
+                  <a href="tel:999" className="distress-send-btn" style={{flex:1, textAlign:'center', textDecoration:'none', display:'flex', alignItems:'center', justifyContent:'center', gap:'0.4rem'}}>📞 Call 999</a>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ════════ FLOATING PANIC BUTTON ════════ */}
+      <button
+        className="distress-fab"
+        title="Send Distress Signal to all emergency contacts"
+        onClick={() => {
+          setDistressReport(null)
+          setDistressCountdown(5)
+          setDistressModal(true)
+          distressCountdownRef.current = setInterval(() => {
+            setDistressCountdown(prev => {
+              if (prev <= 1) { clearInterval(distressCountdownRef.current); return 0; }
+              return prev - 1
+            })
+          }, 1000)
+        }}
+      >🆘</button>
+
       <aside className={`sidebar ${isSidebarOpen ? 'open' : 'closed'}`}>
         <div className="sidebar-logo">
           <ShieldAlert className="logo-icon" />
