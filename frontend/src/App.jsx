@@ -16,7 +16,7 @@ const haversineKm = (lat1, lng1, lat2, lng2) => {
 
 function App() {
   const [activeTab, setActiveTab] = useState('dashboard')
-  const [demoMode, setDemoMode] = useState(false)
+  const [demoMode, setDemoMode] = useState(true)
   const [isSidebarOpen, setSidebarOpen] = useState(true)
 
   // Core State
@@ -71,6 +71,23 @@ function App() {
   const [userLocation, setUserLocation] = useState(null)
   const [locationLoading, setLocationLoading] = useState(false)
   const [locationError, setLocationError] = useState(null)
+  
+  // Auto-fetch GPS on load to make advisory fully autonomous
+  useEffect(() => {
+    if ('geolocation' in navigator) {
+      setLocationLoading(true)
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude })
+          setLocationLoading(false)
+        },
+        (err) => {
+          setLocationError(err.message)
+          setLocationLoading(false)
+        }
+      )
+    }
+  }, [])
   // Distant alerts (threats in other regions, not affecting user)
   const [distantAlerts, setDistantAlerts] = useState([])
   const [userRegionDisplay, setUserRegionDisplay] = useState(null)
