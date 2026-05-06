@@ -24,7 +24,7 @@ Malaysia experiences flash floods, thunderstorms, and haze events year-round —
 [MET Malaysia API] ──► [Watcher Agent] ──► [Assessor Agent] ──► [Coordinator Agent]
        │                  (Threat Level)       (Survival Days)       (Dispatch Decision)
        │                                                                     │
-[Warning API]                                                    [Email to User / Contacts]
+[Warning API]                                                    [Email / SMS to Contacts]
        │
 [Inventory Changes] ──► [Inventory Analyst] ──► [P.A.C.E. Strategist] ──► [Dashboard]
 ```
@@ -36,7 +36,7 @@ Malaysia experiences flash floods, thunderstorms, and haze events year-round —
 | **Input** | MET Malaysia Forecast + Warning API, User Inventory, Personnel data | Raw data collected on schedule |
 | **Processing** | Watcher, Assessor, Inventory Analyst | Threat classified, survival days calculated, readiness scored |
 | **Decision** | Coordinator (Playbook) | Selects: Preparedness / Advisory / Emergency mode |
-| **Action** | Gmail SMTP | Emails user (advisory) or emergency contacts (emergency) |
+| **Action** | Gmail SMTP + Twilio SMS | Emails user (advisory) or emergency contacts (emergency) with optional SMS dispatch |
 
 ---
 
@@ -71,9 +71,9 @@ MyResilience uses **5 specialised AI agents**, each with a clearly scoped role a
 ### 5. 📡 The Coordinator *(Emergency Dispatcher)*
 - **Trigger:** After Assessor or Inventory Analyst completes
 - **Playbook Modes:**
-  - **PREPAREDNESS** — Low inventory detected. Sends a structured restocking email to the user.
-  - **ADVISORY** — Active non-critical threat. Sends a calm situational briefing to the user.
-  - **EMERGENCY** — Critical threat with low survival days. Sends urgent alert to the user **and** all designated Emergency Contacts.
+  - **PREPAREDNESS** — Low inventory detected. Sends a structured restocking email to the user *(if enabled in Settings)*.
+  - **ADVISORY** — Active non-critical threat. Sends a calm situational briefing to the user *(if enabled in Settings)*.
+  - **EMERGENCY** — Critical threat with low survival days. Sends urgent alert to the user **and** all designated Emergency Contacts via email + SMS *(if enabled in Settings)*.
 - **Output:** Formatted emails using structured templates with dynamic data injection.
 
 ---
@@ -84,11 +84,41 @@ MyResilience uses **5 specialised AI agents**, each with a clearly scoped role a
 Step 1 — DETECT:   Watcher parses MET API → classifies severity
 Step 2 — ASSESS:   Assessor computes survival window + applies mobility override
 Step 3 — DECIDE:   Coordinator selects Playbook mode (Preparedness/Advisory/Emergency)
-Step 4 — ACT:      Email dispatched autonomously via Gmail SMTP
+Step 4 — ACT:      Email + optional SMS dispatched autonomously
 Step 5 — LOG:      Activity Network records agent reasoning for full transparency
 ```
 
 All steps execute **without user intervention** after initialization.
+
+---
+
+## 🖥️ Dashboard Features
+
+| Module | Description |
+|---|---|
+| **⚡ Command Dashboard** | Real-time tactical overview with live MYT clock, threat status, and location detection |
+| **🛡️ Asset Readiness** | Category radar chart + readiness score trend history embedded in a single panel |
+| **🌤️ Tactical Intel** | Merged weather + threat panel — glows red on active alerts, shows MET forecast + official warning link |
+| **📦 Asset Inventory** | Full CRUD for household supplies with colour-coded categories, stock bars, and expiry tracking |
+| **👥 Personnel & Comms** | Editable team roster with role colour-coding (family / emergency contact / useful contact) |
+| **🗺️ Threat Map** | Leaflet.js live map with proximity shelter routing, SMS copy, and evacuation advisory download |
+| **📡 Activity Network** | Expandable accordion log of every agent run — shows triggers, reasoning, and agent chain |
+| **⚙️ Settings** | Centralised preferences for GPS location tracking and per-category email notification control |
+
+---
+
+## ⚙️ Settings & Preferences
+
+The **Settings** tab gives users full control over notification behaviour:
+
+| Toggle | Description |
+|---|---|
+| 📍 **GPS Location Tracking** | Auto-fetches browser location for proximity-based threat detection. Off by default. |
+| ✉️ **Preparedness Emails** | Allow the agent to send restocking/audit emails when inventory is low. |
+| ✉️ **Advisory Emails** | Allow the agent to send weather briefings when a non-critical threat is detected. |
+| 🚨 **Emergency Emails** | Allow the agent to email emergency contacts during a critical disaster event. |
+
+> All toggles default to **OFF**. Settings are persisted to `localStorage` and passed to the backend on every agent run.
 
 ---
 
@@ -109,7 +139,7 @@ All steps execute **without user intervention** after initialization.
 |---|---|
 | **Cost** | Free tier: Groq (LPU inference, ~150 req/day free), MET API (free, no key required), Gmail SMTP (free) |
 | **Token Efficiency** | Forecast fetched once daily. Warning API polled every 5 mins. **Change-detection hash** prevents agents from running if weather hasn't changed — saving ~95% of unnecessary LLM calls |
-| **Latency** | Groq Llama-3.1 responses average < 1 second. Full 5-agent chain runs in ~4 seconds |
+| **Latency** | Groq Llama-3.1 responses average < 1 second. Full agent chain runs in ~4 seconds |
 | **Scalability** | Backend is stateless FastAPI. Can be containerised (Docker) and horizontally scaled. State can be migrated to PostgreSQL for multi-household support |
 | **Resilience** | Every agent has a fallback default response. Frontend degrades gracefully on 500 errors with last known state retained |
 
@@ -124,6 +154,7 @@ V2-AI-Hackathon-Overclock/
 │   │   ├── agents/
 │   │   │   ├── safesync_agents.py   # All 5 agent prompts + functions
 │   │   │   ├── gmail_tools.py       # SMTP email sender
+│   │   │   ├── sms_tools.py         # Twilio SMS dispatcher
 │   │   │   └── config.py            # Groq client + env loader
 │   │   └── routers/
 │   │       └── emergency.py         # FastAPI routes + MET API integration
@@ -133,8 +164,8 @@ V2-AI-Hackathon-Overclock/
 │   └── .env                         # ← NOT committed to git
 └── frontend/
     └── src/
-        ├── App.jsx                  # Main React application
-        └── App.css                  # Tactical dark-mode design system
+        ├── App.jsx                  # Main React application (1500+ lines)
+        └── App.css                  # Sovereign Tactical dark-mode design system
 ```
 
 ---
@@ -146,6 +177,7 @@ V2-AI-Hackathon-Overclock/
 - Node.js 18+
 - A [Groq API key](https://console.groq.com) (free)
 - A Gmail account with [App Password enabled](https://myaccount.google.com/security)
+- *(Optional)* A [Twilio account](https://twilio.com) for SMS dispatch
 
 ### 1. Clone & Configure Backend
 
@@ -183,6 +215,9 @@ Open [http://localhost:5173](http://localhost:5173)
 | `NOTIFICATION_EMAIL` | Email address that receives Advisory alerts | ✅ Yes |
 | `GMAIL_USER` | Gmail address used to send emails | ✅ Yes |
 | `GMAIL_APP_PASSWORD` | 16-character Gmail App Password | ✅ Yes |
+| `TWILIO_ACCOUNT_SID` | Twilio Account SID for SMS dispatch | Optional |
+| `TWILIO_AUTH_TOKEN` | Twilio Auth Token | Optional |
+| `TWILIO_PHONE_NUMBER` | Twilio sender phone number | Optional |
 | `ALLOWED_ORIGINS` | Frontend CORS origins | Optional |
 
 > **Security Note:** Never commit your `.env` file. The `.gitignore` should include `backend/.env`.
@@ -212,6 +247,7 @@ Toggle **Live Demo Mode** in the dashboard to simulate a critical flash flood sc
 - **Frontend degradation**: Failed API calls retain last known state and log a warning
 - **No-guess policy**: Watcher returns `null` for unknown impact times instead of fabricating data
 - **Change detection**: Alert hash comparison prevents redundant agent runs
+- **Privacy by default**: All location and notification features are OFF by default; user opts in explicitly
 
 ---
 
