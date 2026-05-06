@@ -265,8 +265,8 @@ function App() {
     // Initial check
     pollWeather(true)
 
-    // Warning Sync: Every 5 minutes (300,000 ms)
-    const warningInterval = setInterval(() => pollWeather(false), 300000)
+    // Warning Sync: Every 1 minute (60,000 ms) for maximum life-saving early detection
+    const warningInterval = setInterval(() => pollWeather(false), 60000)
     
     // Daily Forecast Sync: Every 24 hours (86,400,000 ms)
     const dailyInterval = setInterval(() => pollWeather(true), 86400000)

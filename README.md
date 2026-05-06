@@ -51,7 +51,7 @@ The application runs a decoupled frontend-backend architecture perfectly suited 
 MyResilience features **6 specialised conceptual roles**, which have been structurally merged into **4 High-Density API Nodes** to drastically reduce Groq LLM token usage and circumvent API rate limits. Each node adheres to a strict JSON output contract.
 
 ### Node 1: The Threat Assessor (Watcher + Assessor Merged)
-- **Trigger:** Every 5 minutes (Warning API) + Daily (Forecast API)
+- **Trigger:** Every 1 minute (Warning API) + Daily (Forecast API)
 - **Intelligence:** Interprets Malay weather terms, detects official government warnings, and calculates immediate survival capacity (Water/Food/Mobility) in a single LLM pass. Output dictates the exact `evacuation_urgency`.
 
 ### Node 2: The Preparedness Briefing (Inventory + P.A.C.E. Merged)
@@ -82,7 +82,7 @@ The system is designed with a strict **Local-First, Privacy-by-Design** security
 ## 🔄 System Workflow & Lifecycle (Detailed)
 
 1. **Initialization:** The user loads the dashboard. The frontend loads the persistent state (`inventory`, `team`) from `localStorage` and establishes the initial API connection.
-2. **Threat Polling:** Every 5 minutes, the frontend silently polls the `/api/weather/live` endpoint. The backend pulls data from MET Malaysia, filters it by proximity using the Haversine formula against the user's GPS, and returns the threat status.
+2. **Threat Polling:** Every 1 minute, the frontend silently polls the `/api/weather/live` endpoint. The backend pulls data from MET Malaysia, filters it by proximity using the Haversine formula against the user's GPS, and returns the threat status.
 3. **State Change Detection:** If the threat hash changes (e.g., a new warning appears), the frontend automatically calls `/api/evaluate_risk`.
 4. **Agentic Evaluation (The Brains):** 
    - The *Threat Assessor Agent* analyzes the severity of the storm against the household's actual supplies.
