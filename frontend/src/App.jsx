@@ -115,25 +115,26 @@ function App() {
   }, [inventory, team])
 
   const runAutoAnalysis = async () => {
+    // Single Groq call: analyze_inventory returns both inventory audit AND pace plan
+    // This eliminates the duplicate token burn from calling generate_pace separately
+    const location = userRegionDisplay || 'Malaysia'
     try {
-      const [invRes, paceRes] = await Promise.all([
-        fetch('http://localhost:8000/api/analyze_inventory', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ inventory, team })
-        }),
-        fetch('http://localhost:8000/api/generate_pace', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ inventory, team, location: 'Kuala Lumpur, Malaysia' })
-        })
-      ])
-      
-      let invData = null;
-      let paceData = null;
-      let reasonString = '';
+      const invRes = await fetch('http://localhost:8000/api/analyze_inventory', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ inventory, team, location })
+      })
+
+      let invData = null
+      let paceData = null
+      let reasonString = ''
 
       if (invRes.ok) {
         const payload = await invRes.json()
         invData = payload.analysis
         setInventoryAnalysis(invData)
-        // B2 — Track score history (keep last 10)
+
+        // Track readiness score history (keep last 10)
         setScoreHistory(prev => {
           const entry = { t: new Date().toLocaleTimeString('en-MY', { hour: '2-digit', minute: '2-digit' }), score: invData.readiness_score }
           const next = [...prev, entry].slice(-10)
@@ -141,22 +142,20 @@ function App() {
           return next
         })
         reasonString += `[Assessor Agent] ${invData.reasoning}\n\n`
+
+        // Extract PACE from the same response — no second API call needed
+        if (payload.pace) {
+          paceData = payload.pace
+          setPacePlan(paceData)
+          reasonString += `[P.A.C.E Strategist] ${paceData.reasoning}`
+        }
         if (payload.coordinator_message) {
-          reasonString += `[Coordinator Agent] PREPAREDNESS PROTOCOL:\n${payload.coordinator_message}\n\n`
+          reasonString += `\n\n[Coordinator Agent] ${payload.coordinator_message}`
         }
       } else {
         const errBody = await invRes.json().catch(() => ({}))
-        reasonString += `[Assessor Agent] Analysis degraded — ${errBody.detail || `HTTP ${invRes.status}`}. Displaying last known state.\n\n`
-      }
-
-      if (paceRes.ok) {
-        paceData = await paceRes.json()
-        setPacePlan(paceData)
-        reasonString += `[P.A.C.E Strategist] ${paceData.reasoning}`
-      } else {
-        const errBody = await paceRes.json().catch(() => ({}))
-        reasonString += `[P.A.C.E Strategist] Plan generation degraded — ${errBody.detail || `HTTP ${paceRes.status}`}. Previous plan retained.`
-        // Set a degraded fallback plan if none exists
+        reasonString += `[Assessor Agent] Analysis degraded — ${errBody.detail || `HTTP ${invRes.status}`}. Displaying last known state.`
+        // Retain previous PACE plan if one exists
         setPacePlan(prev => prev ?? {
           primary: 'Service temporarily unavailable. Shelter in place and conserve resources.',
           alternate: 'Monitor official MET Malaysia broadcasts for updates.',
@@ -171,7 +170,7 @@ function App() {
         'Updated Inventory or Personnel Database',
         ['Assessor', 'Coordinator', 'P.A.C.E'],
         reasonString || 'Analysis completed.',
-        invRes.ok && paceRes.ok ? 'success' : 'warning'
+        invRes.ok ? 'success' : 'warning'
       )
     } catch (err) {
       logEvent('Agent Unreachable', 'Auto Analysis Trigger', ['System'], `Could not connect to backend: ${err.message}. Check that the server is running on port 8000.`, 'error')
@@ -194,7 +193,7 @@ function App() {
         body: JSON.stringify({
           disaster_type: disasterType,
           severity: severity,
-          location: userRegionDisplay || 'Petaling Jaya, Malaysia',
+          location: userRegionDisplay || 'Malaysia',
           team: team,
           send_sms_alerts: sendSms,
           ...(userLocation ? { user_lat: userLocation.lat, user_lng: userLocation.lng } : {})
@@ -298,44 +297,89 @@ function App() {
       const L = window.L
       if (!L) { console.error('Leaflet not loaded'); return }
 
-      // Center on user location if known, otherwise PJ
-      const mapCenter = userLocation ? [userLocation.lat, userLocation.lng] : [3.1073, 101.6297]
-      const mapZoom = userLocation ? 13 : 13
-      const map = L.map('leaflet-threat-map', { zoomControl: true }).setView(mapCenter, mapZoom)
+      // Collect all valid marker positions from AI advisory
+      const shelters = (evacAdvisory.shelter_locations || []).filter(l => l.lat !== 0 && l.lng !== 0)
+      const agencies = (evacAdvisory.enforcement_agencies || []).filter(l => l.lat !== 0 && l.lng !== 0)
+      const allMarkers = [...shelters, ...agencies]
+
+      // Determine initial map center:
+      // Priority: user GPS → first shelter from advisory → KL fallback
+      let mapCenter
+      if (userLocation) {
+        mapCenter = [userLocation.lat, userLocation.lng]
+      } else if (shelters.length > 0) {
+        mapCenter = [shelters[0].lat, shelters[0].lng]
+      } else {
+        mapCenter = [3.1390, 101.6869] // KL centre fallback
+      }
+
+      const map = L.map('leaflet-threat-map', { zoomControl: true }).setView(mapCenter, 13)
       leafletInstanceRef.current = map
 
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         attribution: '© <a href="https://openstreetmap.org">OpenStreetMap</a> contributors',
-        maxZoom: 18
+        maxZoom: 19
       }).addTo(map)
 
-      setTimeout(() => {
-        map.invalidateSize()
-        map.setView(mapCenter, mapZoom)
-      }, 300)
+      setTimeout(() => { map.invalidateSize() }, 300)
 
-      const makeIcon = (emoji) => L.divIcon({
-        html: `<div style="font-size:24px;line-height:1;filter:drop-shadow(0 1px 2px rgba(0,0,0,0.6))">${emoji}</div>`,
+      const makeIcon = (emoji, large = false) => L.divIcon({
+        html: `<div style="font-size:${large ? '30px' : '22px'};line-height:1;filter:drop-shadow(0 1px 3px rgba(0,0,0,0.7))">${emoji}</div>`,
         className: '',
-        iconSize: [32, 32],
-        iconAnchor: [16, 16]
+        iconSize: [large ? 36 : 28, large ? 36 : 28],
+        iconAnchor: [large ? 18 : 14, large ? 18 : 14]
       })
 
-      evacAdvisory.shelter_locations?.forEach(loc => {
-        L.marker([loc.lat, loc.lng], { icon: makeIcon('🏠') })
+      // Find nearest shelter (shelters only, not agencies) to user
+      let nearestShelter = null, nearestShelterDist = Infinity
+      if (userLocation && shelters.length > 0) {
+        shelters.forEach(loc => {
+          const d = haversineKm(userLocation.lat, userLocation.lng, loc.lat, loc.lng)
+          if (d < nearestShelterDist) { nearestShelterDist = d; nearestShelter = loc }
+        })
+      }
+
+      // Also find nearest of ALL locations (shelter + agency) for the summary bar
+      let nearestAny = null, nearestAnyDist = Infinity
+      if (userLocation && allMarkers.length > 0) {
+        allMarkers.forEach(loc => {
+          const d = haversineKm(userLocation.lat, userLocation.lng, loc.lat, loc.lng)
+          if (d < nearestAnyDist) { nearestAnyDist = d; nearestAny = loc }
+        })
+      }
+
+      // Draw shelter markers
+      let nearestShelterMarker = null
+      shelters.forEach(loc => {
+        const isNearest = nearestShelter && loc.name === nearestShelter.name
+        const marker = L.marker([loc.lat, loc.lng], { icon: makeIcon('🏠', isNearest), zIndexOffset: isNearest ? 900 : 0 })
           .addTo(map)
-          .bindPopup(`<b style="color:#16a34a">🏠 Shelter</b><br><b>${loc.name}</b><br><span style="color:#6b7280;font-size:12px">${loc.address}</span>`)
+          .bindPopup(
+            `<b style="color:#16a34a">🏠 ${isNearest ? '🏆 NEAREST SHELTER' : 'Evacuation Shelter'}</b>
+            <br><b>${loc.name}</b>
+            <br><span style="color:#6b7280;font-size:12px">${loc.address}</span>
+            ${userLocation ? `<br><span style="color:#84cc16;font-size:12px">📏 ${haversineKm(userLocation.lat, userLocation.lng, loc.lat, loc.lng).toFixed(2)} km from you</span>` : ''}
+            <br><a href="https://maps.google.com/?q=${loc.lat},${loc.lng}" target="_blank" style="color:#3b82f6;font-size:12px">Open in Google Maps ↗</a>`
+          )
+        if (isNearest) nearestShelterMarker = marker
       })
 
+      // Draw agency markers
       const agencyEmoji = { police: '🚔', fire: '🚒', hospital: '🏥', nadma: '🏛️' }
-      evacAdvisory.enforcement_agencies?.forEach(agency => {
+      agencies.forEach(agency => {
         const emoji = agencyEmoji[agency.type] || '📍'
         L.marker([agency.lat, agency.lng], { icon: makeIcon(emoji) })
           .addTo(map)
-          .bindPopup(`<b style="color:#2563eb">${emoji} ${agency.type?.toUpperCase()}</b><br><b>${agency.name}</b><br><span style="color:#6b7280;font-size:12px">${agency.address}</span>`)
+          .bindPopup(
+            `<b style="color:#2563eb">${emoji} ${agency.type?.toUpperCase()}</b>
+            <br><b>${agency.name}</b>
+            <br><span style="color:#6b7280;font-size:12px">${agency.address}</span>
+            ${userLocation ? `<br><span style="color:#94a3b8;font-size:12px">📏 ${haversineKm(userLocation.lat, userLocation.lng, agency.lat, agency.lng).toFixed(2)} km from you</span>` : ''}
+            <br><a href="https://maps.google.com/?q=${agency.lat},${agency.lng}" target="_blank" style="color:#3b82f6;font-size:12px">Open in Google Maps ↗</a>`
+          )
       })
 
-      // 📍 User location marker + nearest-shelter polyline
+      // User location marker + route line to nearest shelter
       if (userLocation) {
         const uIcon = L.divIcon({
           html: `<div class="user-loc-dot"><div class="user-loc-ring"></div></div>`,
@@ -343,27 +387,42 @@ function App() {
           iconSize: [16, 16],
           iconAnchor: [8, 8]
         })
-        L.marker([userLocation.lat, userLocation.lng], { icon: uIcon, zIndexOffset: 1000 })
+        const userMarker = L.marker([userLocation.lat, userLocation.lng], { icon: uIcon, zIndexOffset: 1000 })
           .addTo(map)
           .bindPopup(`<b style="color:#3b82f6">📍 Your Location</b><br><span style="color:#8b949e;font-size:11px">${userLocation.lat.toFixed(5)}, ${userLocation.lng.toFixed(5)}</span>`)
-          .openPopup()
 
-        // Find nearest among shelters + agencies
-        const allLocs = [...(evacAdvisory.shelter_locations || []), ...(evacAdvisory.enforcement_agencies || [])]
-        let nearest = null, minDist = Infinity
-        allLocs.forEach(loc => {
-          const d = haversineKm(userLocation.lat, userLocation.lng, loc.lat, loc.lng)
-          if (d < minDist) { minDist = d; nearest = loc }
-        })
-        if (nearest) {
-          L.polyline([[userLocation.lat, userLocation.lng], [nearest.lat, nearest.lng]], {
-            color: '#84cc16', weight: 2.5, dashArray: '8,5', opacity: 0.85
+        // Draw route line to nearest shelter (prefer shelter over agency)
+        if (nearestShelter) {
+          L.polyline([[userLocation.lat, userLocation.lng], [nearestShelter.lat, nearestShelter.lng]], {
+            color: '#84cc16', weight: 3.5, dashArray: '10,6', opacity: 0.9
           }).addTo(map)
-            .bindTooltip(`→ ${nearest.name} · ${minDist.toFixed(2)} km`, { sticky: true, className: 'leaflet-route-tip' })
+            .bindTooltip(`🏆 Nearest shelter: ${nearestShelter.name} · ${nearestShelterDist.toFixed(2)} km`, {
+              sticky: true, className: 'leaflet-route-tip', permanent: false
+            })
+          // Auto-open nearest shelter popup
+          if (nearestShelterMarker) {
+            setTimeout(() => nearestShelterMarker.openPopup(), 600)
+          }
+        } else if (nearestAny) {
+          // Fallback: route to nearest of any type
+          L.polyline([[userLocation.lat, userLocation.lng], [nearestAny.lat, nearestAny.lng]], {
+            color: '#f59e0b', weight: 3, dashArray: '8,5', opacity: 0.85
+          }).addTo(map)
+            .bindTooltip(`→ ${nearestAny.name} · ${nearestAnyDist.toFixed(2)} km`, { sticky: true, className: 'leaflet-route-tip' })
         }
-        // Fit view to include user + PJ center
-        const bounds = L.latLngBounds([[userLocation.lat, userLocation.lng], [3.1073, 101.6297]])
-        map.fitBounds(bounds, { padding: [50, 50], maxZoom: 14 })
+
+        // FitBounds: encompass user position + ALL advisory markers (true Malaysia-wide accuracy)
+        const boundsPoints = [[userLocation.lat, userLocation.lng], ...allMarkers.map(l => [l.lat, l.lng])]
+        if (boundsPoints.length > 1) {
+          const bounds = L.latLngBounds(boundsPoints)
+          map.fitBounds(bounds, { padding: [60, 60], maxZoom: 15 })
+        } else {
+          userMarker.openPopup()
+        }
+      } else if (allMarkers.length > 0) {
+        // No user location — fit to all advisory markers
+        const bounds = L.latLngBounds(allMarkers.map(l => [l.lat, l.lng]))
+        map.fitBounds(bounds, { padding: [60, 60], maxZoom: 14 })
       }
     }, 250)
 
@@ -749,12 +808,33 @@ function App() {
                   {inventoryAnalysis.readiness_score}
                 </span>
                 <span className="text-muted" style={{fontSize:'0.9rem'}}>/&nbsp;100</span>
+                {inventoryAnalysis.survival_days != null && (
+                  <span className="survival-days-pill" title="Estimated days of supply remaining">
+                    🕒 {inventoryAnalysis.survival_days} day{inventoryAnalysis.survival_days !== 1 ? 's' : ''} supply
+                  </span>
+                )}
               </div>
               <p className="text-muted" style={{fontSize:'0.85rem'}}>{inventoryAnalysis.summary}</p>
               {inventoryAnalysis.critical_gaps.length > 0 && (
                 <div className="gaps-row">
                   <span style={{fontSize:'0.75rem', fontWeight:'bold', color:'var(--warning)'}}>⚠ GAPS:</span>
                   {inventoryAnalysis.critical_gaps.map(g => <span key={g} className="gap-tag">{g}</span>)}
+                </div>
+              )}
+              {inventoryAnalysis.low_stock_items?.length > 0 && (
+                <div className="gaps-row" style={{marginTop:'0.4rem'}}>
+                  <span style={{fontSize:'0.75rem', fontWeight:'bold', color:'var(--danger)'}}>📉 LOW STOCK:</span>
+                  {inventoryAnalysis.low_stock_items.slice(0,4).map(item => (
+                    <span key={item} className="gap-tag" style={{borderColor:'rgba(239,68,68,0.4)',color:'#f87171'}}>{item}</span>
+                  ))}
+                </div>
+              )}
+              {inventoryAnalysis.expiring_items?.length > 0 && (
+                <div className="gaps-row" style={{marginTop:'0.4rem'}}>
+                  <span style={{fontSize:'0.75rem', fontWeight:'bold', color:'var(--warning)'}}>⏳ EXPIRING:</span>
+                  {inventoryAnalysis.expiring_items.slice(0,3).map(item => (
+                    <span key={item} className="gap-tag" style={{borderColor:'rgba(234,179,8,0.4)',color:'#facc15'}}>{item}</span>
+                  ))}
                 </div>
               )}
               <div className="rec-list">
@@ -1035,11 +1115,11 @@ function App() {
 
   // B1 — Shelter detail cards renderer
   const SHELTER_CONTACTS = {
-    'shelter': { capacity: '~500 persons', contact: '03-7000 0000', authority: 'MBPJ / JKM' },
-    'police':  { capacity: 'N/A', contact: '999 / 03-2266 2222', authority: 'PDRM' },
-    'fire':    { capacity: 'N/A', contact: '994', authority: 'Bomba Malaysia' },
-    'hospital':{ capacity: 'ICU + Emergency', contact: '03-3375 4333', authority: 'KKM' },
-    'nadma':   { capacity: 'N/A', contact: '1800-88-2000', authority: 'NADMA / JKM' },
+    'shelter': { capacity: '~300–500 persons', contact: '999 / portalbencana.nadma.gov.my', authority: 'JKM / Pihak Berkuasa Tempatan' },
+    'police':  { capacity: 'N/A', contact: '999 (Emergency) / 112', authority: 'PDRM' },
+    'fire':    { capacity: 'N/A', contact: '994 / 999', authority: 'Jabatan Bomba dan Penyelamat Malaysia' },
+    'hospital':{ capacity: 'ICU + Emergency', contact: '999 / Hospital terdekat', authority: 'Kementerian Kesihatan Malaysia (KKM)' },
+    'nadma':   { capacity: 'N/A', contact: '1800-88-2000 (NADMA)', authority: 'NADMA / JKM' },
   }
 
   const renderShelterCards = (locations, title, emoji) => {
@@ -1174,14 +1254,52 @@ function App() {
       )}
 
       {!evacAdvisory && !evacLoading && (
-        <div className="panel evac-empty-state">
-          <div style={{fontSize:'4rem', marginBottom:'1rem'}}>🗺️</div>
-          <h3>Evacuation Advisor Ready</h3>
-          <p className="text-muted" style={{maxWidth:'480px', margin:'0 auto', lineHeight:'1.6'}}>
-            Click <strong>Run Advisory</strong> to generate a real-time evacuation plan with Klang Valley shelter locations, enforcement agencies, safe routes, avoidance zones, and an SMS-ready alert text.
-          </p>
-        </div>
+        <>
+          <div className="panel evac-empty-state">
+            <div style={{fontSize:'4rem', marginBottom:'1rem'}}>🗺️</div>
+            <h3>Evacuation Advisor Ready</h3>
+            <p className="text-muted" style={{maxWidth:'500px', margin:'0 auto 0.75rem', lineHeight:'1.6'}}>
+              Click <strong>Run Advisory</strong> to generate a real-time evacuation plan with shelter locations,
+              enforcement agencies, safe routes, and avoidance zones —{' '}
+              {userRegionDisplay
+                ? <strong style={{color:'var(--info)'}}>tailored for {userRegionDisplay.split(',')[0]}</strong>
+                : 'for your current location across all of Malaysia'}.
+            </p>
+            {!userRegionDisplay && (
+              <p className="text-muted" style={{fontSize:'0.8rem', margin:'0 auto', maxWidth:'400px'}}>
+                💡 Click <strong>Locate Me</strong> first for a location-specific advisory (Sabah, Sarawak, or any Malaysian state).
+              </p>
+            )}
+          </div>
+
+          {/* Official Malaysian Data Sources Panel */}
+          <div className="panel gov-sources-panel">
+            <h4 style={{marginTop:0, marginBottom:'1rem', color:'var(--info)', letterSpacing:'1px', fontSize:'0.85rem', textTransform:'uppercase'}}>
+              🏛️ Official Malaysian Emergency Data Sources
+            </h4>
+            <div className="gov-sources-grid">
+              {[
+                { name:'NADMA Portal Bencana', desc:'Live disaster & evacuation centre status', url:'https://portalbencana.nadma.gov.my', badge:'LIVE', color:'var(--danger)' },
+                { name:'JPS Water Level', desc:'Real-time river & flood gauge data', url:'https://water.jps.gov.my', badge:'LIVE', color:'var(--danger)' },
+                { name:'data.gov.my', desc:'MET weather, warnings & open datasets', url:'https://api.data.gov.my', badge:'API', color:'var(--info)' },
+                { name:'JKM Welfare', desc:'Welfare shelters & aid coordination', url:'https://www.jkm.gov.my', badge:'GOV', color:'var(--primary)' },
+                { name:'DOSM / Banci', desc:'Census, population & demographic data', url:'https://www.dosm.gov.my', badge:'GOV', color:'var(--primary)' },
+                { name:'KDN', desc:'Home Affairs — enforcement & security ops', url:'https://www.kdn.gov.my', badge:'GOV', color:'var(--primary)' },
+                { name:'MySikap / JPJ', desc:'Road conditions & transport advisories', url:'https://www.jpj.gov.my', badge:'GOV', color:'var(--primary)' },
+                { name:'Bomba Malaysia', desc:'Fire & rescue station locator', url:'https://www.bomba.gov.my', badge:'GOV', color:'var(--warning)' },
+              ].map(s => (
+                <a key={s.name} href={s.url} target="_blank" rel="noreferrer" className="gov-source-card">
+                  <span className="gov-source-badge" style={{background:`${s.color}22`, color:s.color, borderColor:`${s.color}44`}}>{s.badge}</span>
+                  <div className="gov-source-name">{s.name}</div>
+                  <div className="gov-source-desc">{s.desc}</div>
+                  <div className="gov-source-url">{s.url.replace('https://','')}</div>
+                </a>
+              ))}
+            </div>
+          </div>
+        </>
       )}
+
 
       {evacLoading && (
         <div className="panel evac-empty-state">

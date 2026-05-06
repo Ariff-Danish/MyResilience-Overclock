@@ -3,7 +3,7 @@ import asyncio
 import json
 from typing import List, Optional
 from pydantic import BaseModel
-from app.agents.config import get_groq_client, get_model, NOTIFICATION_EMAIL
+from app.agents.config import get_groq_client, get_model, get_fallback_model, mark_rate_limited, NOTIFICATION_EMAIL
 from app.agents.gmail_tools import send_email
 
 
@@ -58,18 +58,73 @@ class PACEPlanResult(BaseModel):
 # ══════════════════════════════════════════════════════════════
 
 def _call_groq_sync(system_prompt: str, user_prompt: str, max_tokens: int = 1500) -> dict:
+    import time
     client = get_groq_client()
-    resp = client.chat.completions.create(
-        model=get_model(),
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-        temperature=0.15,
-        max_tokens=max_tokens,
-        response_format={"type": "json_object"},
-    )
-    return json.loads(resp.choices[0].message.content.strip())
+
+    def _do_call(model_name=None):
+        model = model_name or get_model()
+        # qwen3 uses a "thinking" mode by default — disable it for JSON responses
+        # to prevent empty completions and json_validate_failed errors
+        extra_kwargs = {}
+        if "qwen" in model.lower():
+            extra_kwargs["reasoning_effort"] = "none"
+
+        resp = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.15,
+            max_tokens=max_tokens,
+            response_format={"type": "json_object"},
+            **extra_kwargs,
+        )
+        content = resp.choices[0].message.content
+        if not content or not content.strip():
+            raise ValueError(f"[Groq] Empty response from {model} — likely thinking-mode issue")
+        print(f"[Groq] ✅ Call succeeded on model: {model}")
+        return json.loads(content.strip())
+
+    # Attempt primary model
+    current_model = get_model()
+    try:
+        return _do_call(current_model)
+    except Exception as e:
+        err_str = str(e).lower()
+        if "429" in err_str or "rate_limit" in err_str or "too many requests" in err_str:
+            # TPD (tokens per day) = 24h cooldown; RPM = 60s cooldown
+            is_tpd = "tokens per day" in err_str or "tpd" in err_str
+            cooldown = 86400 if is_tpd else 60
+            mark_rate_limited(model=current_model, cooldown_seconds=cooldown)
+            fallback = get_fallback_model(current_model)
+            print(f"[Groq] Cascading: {current_model} → {fallback} (cooldown={'24h TPD' if is_tpd else '60s RPM'})")
+        elif "json_validate_failed" in err_str or "400" in err_str or "empty response" in err_str.lower():
+            # Model returned malformed/empty JSON — cascade to next model
+            fallback = get_fallback_model(current_model)
+            print(f"[Groq] Cascading: {current_model} → {fallback} (reason: JSON validation failed)")
+        else:
+            raise
+        time.sleep(1)
+        try:
+            return _do_call(fallback)
+        except Exception as e2:
+            err2 = str(e2).lower()
+            if "429" in err2 or "rate_limit" in err2:
+                is_tpd2 = "tokens per day" in err2 or "tpd" in err2
+                cooldown2 = 86400 if is_tpd2 else 60
+                mark_rate_limited(model=fallback, cooldown_seconds=cooldown2)
+                last_resort = get_fallback_model(fallback)
+                print(f"[Groq] Cascading: {fallback} → {last_resort} (cooldown={'24h TPD' if is_tpd2 else '60s RPM'})")
+            elif "json_validate_failed" in str(e2).lower() or "400" in str(e2) or "empty response" in str(e2).lower():
+                last_resort = get_fallback_model(fallback)
+                print(f"[Groq] Cascading: {fallback} → {last_resort} (reason: JSON validation failed)")
+            else:
+                raise
+            time.sleep(1)
+            return _do_call(last_resort)
+
+
 
 
 async def _call_groq(system_prompt: str, user_prompt: str, max_tokens: int = 1500) -> dict:
@@ -507,101 +562,423 @@ class EvacuationAdvisoryResult(BaseModel):
     reasoning: str
 
 
-EVACUATION_ADVISOR_PROMPT = """ROLE: You are the Malaysian National Evacuation Advisor covering ALL Malaysian states including Sabah and Sarawak. You are integrated with NADMA, PDRM, Bomba, JKM, JPS, and KKM.
+# ── NEW: LLM only generates contextual text — NO GPS coordinates ─────────────
+EVAC_CONTEXT_PROMPT = """ROLE: You are the Malaysian National Evacuation Advisor. You provide CONTEXTUAL guidance only — roads, avoidance zones, and SMS text. GPS coordinates are provided separately from official sources.
 
-CRITICAL: Generate shelter/agency locations for the ACTUAL location in the user prompt. NEVER default to Klang Valley unless explicitly stated.
+INPUTS: disaster_type, severity, location, shelter_names (list of real nearby shelters), agency_names (list of real nearby agencies).
 
-STATE COORDINATE REFERENCE (use nearest state for GPS):
-- KL/PJ: lat~3.14, lng~101.68 | Selangor: lat~3.07, lng~101.52
-- Johor Bahru: lat~1.49, lng~103.74 | Penang: lat~5.41, lng~100.33
-- Ipoh: lat~4.60, lng~101.09 | Kota Bharu: lat~6.12, lng~102.24
-- Kuantan: lat~3.81, lng~103.33 | Alor Setar: lat~6.12, lng~100.37
-- Kota Kinabalu: lat~5.98, lng~116.07 | Sandakan: lat~5.84, lng~118.12
-- Tawau: lat~4.24, lng~117.89 | Kuching: lat~1.55, lng~110.36
-- Miri: lat~4.40, lng~113.99 | Sibu: lat~2.30, lng~111.82
-- Melaka: lat~2.19, lng~102.25 | Seremban: lat~2.73, lng~101.94
+TASK:
 
-OFFICIAL DATA SOURCES (reference these in reasoning):
-- NADMA portalbencana: https://portalbencana.nadma.gov.my
-- JPS flood data: https://water.jps.gov.my
-- data.gov.my API: https://api.data.gov.my
-- JKM shelters: https://www.jkm.gov.my
-- DOSM/Banci: https://www.dosm.gov.my
-- KDN: https://www.kdn.gov.my
+SECTION 1 — areas_to_avoid (exactly 5 specific local areas/roads to avoid for the given disaster_type and location):
+- Use real road names, low-lying areas, river basins, or industrial zones relevant to this location.
+- Sabah: reference Jalan Tuaran, Sungai Moyog, coastal areas etc.
+- Sarawak: reference Sungai Sarawak, low-lying Jalan Kuching-Samarahan etc.
+- Peninsula: reference specific state roads and flood-prone rivers.
 
-TASK: Given disaster_type, location, severity, team — produce a LOCATION-SPECIFIC plan.
+SECTION 2 — routes_to_take (exactly 3 evacuation routes specific to this location and disaster):
+- Name actual roads that lead away from the threat toward higher ground or the shelters listed.
+- Each route should be distinct (not the same road repeated).
 
-SECTION 1 — shelter_locations (exactly 3 PPS near the given location):
-Name format: "Dewan/SK/Padang [local name], [district]"
+SECTION 3 — sms_alert_text (max 160 chars):
+"🚨 MYRESILIENCE: [threat] at [location]. Evacuate via [primary road]. Shelter: [first shelter name]. Call 999."
 
-SECTION 2 — enforcement_agencies (exactly 5: 1 PDRM, 1 Bomba, 1 Hospital, 1 JKM, 1 NADMA/PBT — all near given location)
+SECTION 4 — reasoning (2-3 sentences citing NADMA/JPS sources explaining why these routes/avoidance zones were chosen).
 
-SECTION 3 — areas_to_avoid (exactly 5, use local road names for that state/city)
-
-SECTION 4 — routes_to_take (exactly 3, use roads appropriate to that state):
-- Sabah: Pan Borneo, Jalan Tuaran, Jalan Penampang etc.
-- Sarawak: Pan Borneo Sarawak, Jalan Kuching-Samarahan etc.
-- Peninsula: Federal/State roads for that specific state
-
-SECTION 5 — sms_alert_text (max 160 chars):
-"🚨 MYRESILIENCE: [threat] at [location]. Evacuate via [road]. Shelter: [name]. Call 999."
-
-OUTPUT (STRICT JSON — no markdown):
+OUTPUT (STRICT JSON — no markdown, no coordinates):
 {
-  "shelter_locations": [{"name":"<str>","address":"<str>","lat":<float>,"lng":<float>,"type":"shelter"}],
-  "enforcement_agencies": [{"name":"<str>","address":"<str>","lat":<float>,"lng":<float>,"type":"<police|fire|hospital|nadma>"}],
-  "areas_to_avoid": ["<str>"],
-  "routes_to_take": ["<str>"],
+  "areas_to_avoid": ["<str>", "<str>", "<str>", "<str>", "<str>"],
+  "routes_to_take": ["<str>", "<str>", "<str>"],
   "sms_alert_text": "<str ≤160 chars>",
-  "reasoning": "<2-3 sentences citing NADMA/JPS sources>"
+  "reasoning": "<2-3 sentences>"
 }
 
-RULES: Exactly 3 shelters, 5 agencies, 5 avoid zones, 3 routes. GPS within 30km of stated location. No markdown."""
+RULES: Exactly 5 avoid zones, 3 routes. Use location-specific road names — never use generic placeholders. No GPS coordinates in output. No markdown."""
+
+
+def _haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """Inline haversine — avoids circular import with emergency.py."""
+    import math
+    R = 6371
+    dlat = math.radians(lat2 - lat1)
+    dlng = math.radians(lng2 - lng1)
+    a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlng/2)**2
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+def _validate_marker_coords(
+    markers: list,
+    anchor_lat: float,
+    anchor_lng: float,
+    max_radius_km: float = 60.0
+) -> list:
+    """
+    Post-process AI-generated shelter/agency coordinates.
+    Any marker whose GPS is more than max_radius_km from the anchor is zeroed out (lat=0, lng=0).
+    The frontend already filters zero-coord markers from the Leaflet map.
+    """
+    validated = []
+    for m in markers:
+        if m.lat == 0.0 and m.lng == 0.0:
+            validated.append(m)  # Already a known fallback — keep as-is
+            continue
+        dist = _haversine_km(anchor_lat, anchor_lng, m.lat, m.lng)
+        if dist <= max_radius_km:
+            validated.append(m)
+        else:
+            print(f"[Evacuation Advisor] ⚠️  Marker '{m.name}' is {dist:.1f} km from anchor — GPS drift detected, zeroing out.")
+            validated.append(ShelterLocation(
+                name=m.name,
+                address=m.address + " [GPS unverified — check portalbencana.nadma.gov.my]",
+                lat=0.0,
+                lng=0.0,
+                type=m.type
+            ))
+    return validated
+
+
+# Malaysian state anchor coordinates for location-string matching
+_MY_STATE_ANCHORS = {
+    "kota kinabalu": (5.9804, 116.0735), "sabah": (5.9804, 116.0735),
+    "sandakan": (5.8402, 118.1179), "tawau": (4.2449, 117.8912),
+    "keningau": (5.3363, 116.1637), "ranau": (5.9614, 116.6694),
+    "kuching": (1.5497, 110.3625), "sarawak": (1.5497, 110.3625),
+    "miri": (4.3995, 113.9914), "sibu": (2.3000, 111.8167),
+    "bintulu": (3.1667, 113.0333), "lahad datu": (5.0279, 118.3291),
+    "johor bahru": (1.4927, 103.7414), "johor": (1.9344, 103.3587),
+    "penang": (5.4141, 100.3288), "georgetown": (5.4141, 100.3288),
+    "ipoh": (4.5975, 101.0901), "perak": (4.5975, 101.0901),
+    "kota bharu": (6.1254, 102.2381), "kelantan": (5.4000, 102.0000),
+    "kuantan": (3.8077, 103.3260), "pahang": (3.8077, 103.3260),
+    "alor setar": (6.1184, 100.3679), "kedah": (6.1184, 100.3679),
+    "kuala terengganu": (5.3296, 103.1370), "terengganu": (5.3296, 103.1370),
+    "seremban": (2.7297, 101.9381), "negeri sembilan": (2.7297, 101.9381),
+    "melaka": (2.1896, 102.2501),
+    "petaling jaya": (3.1073, 101.6297), "petaling": (3.1073, 101.6297),
+    "kuala lumpur": (3.1390, 101.6869), "selangor": (3.0738, 101.5183),
+    "putrajaya": (2.9264, 101.6964), "labuan": (5.2831, 115.2308),
+    "perlis": (6.4449, 100.2048), "kangar": (6.4449, 100.2048),
+}
+
+
+def _resolve_anchor(location: str, user_lat: Optional[float] = None, user_lng: Optional[float] = None):
+    """Return (lat, lng) anchor for coordinate validation. Prefers user GPS over location string."""
+    if user_lat is not None and user_lng is not None:
+        return user_lat, user_lng
+    loc_lower = location.lower()
+    for key, coords in _MY_STATE_ANCHORS.items():
+        if key in loc_lower:
+            return coords
+    return None  # Unknown location — skip validation
 
 
 async def run_evacuation_advisor_agent(
     disaster_type: str,
     severity: str,
     location: str,
-    team: list
+    team: list,
+    user_lat: Optional[float] = None,
+    user_lng: Optional[float] = None,
 ) -> EvacuationAdvisoryResult:
+    """
+    Two-tier evacuation advisory:
+    Tier 1 — Real GPS positions from OpenStreetMap (Overpass API)
+    Tier 2 — LLM generates routes, avoidance zones, SMS text, reasoning
+
+    If OSM returns empty results (no network / no data), falls back to
+    LLM-generated positions with coordinate validation.
+    """
+    import asyncio
+    from app.agents.overpass_tools import fetch_real_facilities
+
+    anchor = _resolve_anchor(location, user_lat, user_lng)
+    loc = location.split(",")[0].strip() if location else "your area"
+
+    # ── TIER 1: Fetch real positions from OSM ────────────────────────────────
+    osm_shelters = []
+    osm_agencies = []
+    osm_source = "none"
+
+    if anchor:
+        try:
+            osm_data = await asyncio.to_thread(
+                fetch_real_facilities,
+                anchor[0], anchor[1],
+                n_shelters=3, n_agencies=5, radius_m=15000
+            )
+            osm_shelters = osm_data["shelter_locations"]
+            osm_agencies = osm_data["enforcement_agencies"]
+            osm_source = osm_data["source"]
+            print(f"[Evacuation Advisor] OSM: {len(osm_shelters)} shelters, {len(osm_agencies)} agencies near {location}")
+        except Exception as e:
+            print(f"[Evacuation Advisor] OSM fetch failed (non-critical): {e}")
+
+    # ── TIER 2: LLM generates contextual text only (no coordinates) ──────────
     try:
-        user = (
+        # Tell LLM which real facilities were found so it can reference them
+        shelter_names = [s["name"] for s in osm_shelters] if osm_shelters else [f"PPS {loc}"]
+        agency_names = [a["name"] for a in osm_agencies] if osm_agencies else []
+
+        user_prompt = (
             f"disaster_type: {disaster_type}\n"
             f"severity: {severity}\n"
             f"location: {location}\n"
-            f"team_size: {len(team)}\n"
-            f"team: {json.dumps(team)}"
+            f"shelter_names: {json.dumps(shelter_names)}\n"
+            f"agency_names: {json.dumps(agency_names)}\n"
+            f"team_size: {len(team)}"
         )
-        result = await _call_groq(EVACUATION_ADVISOR_PROMPT, user, max_tokens=2000)
-        shelters = [ShelterLocation(**s) for s in result.get("shelter_locations", [])]
-        agencies = [ShelterLocation(**a) for a in result.get("enforcement_agencies", [])]
-        return EvacuationAdvisoryResult(
-            shelter_locations=shelters,
-            enforcement_agencies=agencies,
-            areas_to_avoid=result.get("areas_to_avoid", []),
-            routes_to_take=result.get("routes_to_take", []),
-            sms_alert_text=result.get("sms_alert_text", "🚨 MYRESILIENCE: Threat detected. Call 999. Move to nearest evacuation centre immediately."),
-            reasoning=result.get("reasoning", "")
-        )
+        context_result = await _call_groq(EVAC_CONTEXT_PROMPT, user_prompt, max_tokens=800)
+
+        areas_to_avoid = context_result.get("areas_to_avoid", [])
+        routes_to_take = context_result.get("routes_to_take", [])
+        sms_text = context_result.get("sms_alert_text",
+            f"🚨 MYRESILIENCE: {disaster_type.capitalize()} at {loc}. Evacuate to nearest PPS. Call 999. portalbencana.nadma.gov.my")
+        reasoning = context_result.get("reasoning",
+            f"Advisory generated for {location}. Facility positions sourced from OpenStreetMap. Visit portalbencana.nadma.gov.my for live PPS status.")
+
     except Exception as e:
-        print(f"[Evacuation Advisor] Agent failed: {e}")
-        return EvacuationAdvisoryResult(
-            shelter_locations=[
-                ShelterLocation(name="Dewan Olahraga MBPJ", address="Jalan Belia, PJ", lat=3.1073, lng=101.6297, type="shelter"),
-                ShelterLocation(name="SK Seksyen 10 PJ", address="Seksyen 10, PJ", lat=3.1020, lng=101.6310, type="shelter"),
-                ShelterLocation(name="Dewan Komuniti Seksyen 14", address="Seksyen 14, PJ", lat=3.1073, lng=101.6067, type="shelter"),
-            ],
-            enforcement_agencies=[
-                ShelterLocation(name="IPD Petaling Jaya (PDRM)", address="Jalan Othman, PJ", lat=3.1103, lng=101.6378, type="police"),
-                ShelterLocation(name="Balai Bomba PJ", address="Jalan Kemajuan, PJ", lat=3.1013, lng=101.6343, type="fire"),
-                ShelterLocation(name="Hospital Tengku Ampuan Rahimah", address="Jalan Langat, Klang", lat=3.0444, lng=101.4510, type="hospital"),
-                ShelterLocation(name="Balai Polis Damansara", address="Persiaran Damansara, PJ", lat=3.1522, lng=101.6216, type="police"),
-                ShelterLocation(name="Pejabat JKM Petaling", address="Kompleks Pentadbiran PJ", lat=3.1073, lng=101.6067, type="nadma"),
-            ],
-            areas_to_avoid=["Jalan Klang Lama (flood-prone low-lying sections)", "Kawasan Sungai Penchala", "Kesas Highway underpass sections", "Jalan Templer near river", "Shah Alam Section 25 low areas"],
-            routes_to_take=["Route 1: NKVE northbound → exit Damansara → DUKE highway to high ground", "Route 2: Federal Highway → Kesas eastbound → LDP interchange (avoid low underpasses)", "Route 3: Jalan Ipoh → MRR2 → shelter at Kepong"],
-            sms_alert_text="🚨 MYRESILIENCE: Flood threat. Evacuate via NKVE/DUKE. Shelter: Dewan Olahraga MBPJ. Avoid Jln Klang Lama. Call 999.",
-            reasoning="Default evacuation plan applied due to agent error. Petaling Jaya standard flood protocol used."
+        print(f"[Evacuation Advisor] LLM context call failed: {e}")
+        areas_to_avoid = [
+            f"Kawasan rendah berhampiran sungai di {loc}",
+            "Jalan yang banjir atau dinaiki air",
+            "Kawasan pembinaan semasa hujan lebat",
+            "Laluan bawah tanah / underpass semasa banjir",
+            "Pantai atau kawasan pesisir semasa ribut"
+        ]
+        routes_to_take = [
+            f"Ikut jalan utama ke kawasan tinggi berhampiran {loc}",
+            "Gunakan laluan alternatif yang disyorkan oleh pihak berkuasa tempatan",
+            "Hubungi 999 atau 991 (Bomba) untuk bantuan pemindahan"
+        ]
+        sms_text = f"🚨 MYRESILIENCE: {disaster_type.capitalize()} at {loc}. Evacuate to nearest PPS. Call 999. portalbencana.nadma.gov.my"
+        reasoning = f"Context agent unavailable. Facility positions sourced from OpenStreetMap. Visit portalbencana.nadma.gov.my or call 999 for live shelter info."
+
+    # ── Build final shelter/agency lists ─────────────────────────────────────
+    if osm_shelters:
+        # Use real OSM positions
+        shelters = [ShelterLocation(**s) for s in osm_shelters]
+    else:
+        # OSM empty — use named fallbacks with lat=0/lng=0 (frontend shows address-only cards)
+        shelters = [
+            ShelterLocation(name=f"Pusat Pemindahan Sementara (PPS) {loc}", address="Semak: portalbencana.nadma.gov.my", lat=0.0, lng=0.0, type="shelter"),
+            ShelterLocation(name=f"Dewan Olahraga / Balai Raya {loc}", address=f"Hubungi PBT tempatan di {loc}", lat=0.0, lng=0.0, type="shelter"),
+            ShelterLocation(name=f"Sekolah Kebangsaan Terdekat, {loc}", address=f"Semak dengan JKM {loc}", lat=0.0, lng=0.0, type="shelter"),
+        ]
+        print(f"[Evacuation Advisor] ⚠️  OSM returned 0 shelters for {location} — using named fallbacks")
+
+    if osm_agencies:
+        agencies = [ShelterLocation(**a) for a in osm_agencies]
+    else:
+        agencies = [
+            ShelterLocation(name=f"Balai Polis {loc}", address=f"{loc}", lat=0.0, lng=0.0, type="police"),
+            ShelterLocation(name=f"Balai Bomba dan Penyelamat {loc}", address=f"{loc}", lat=0.0, lng=0.0, type="fire"),
+            ShelterLocation(name=f"Hospital Kerajaan {loc}", address=f"{loc}", lat=0.0, lng=0.0, type="hospital"),
+            ShelterLocation(name=f"Pejabat JKM {loc}", address=f"{loc}", lat=0.0, lng=0.0, type="nadma"),
+            ShelterLocation(name="NADMA Negeri", address="portalbencana.nadma.gov.my", lat=0.0, lng=0.0, type="nadma"),
+        ]
+
+    reasoning_with_source = (
+        f"[OSM: {osm_source.upper()}] " + reasoning
+        if osm_source == "osm" else reasoning
+    )
+
+    return EvacuationAdvisoryResult(
+        shelter_locations=shelters,
+        enforcement_agencies=agencies,
+        areas_to_avoid=areas_to_avoid,
+        routes_to_take=routes_to_take,
+        sms_alert_text=sms_text,
+        reasoning=reasoning_with_source
+    )
+
+
+# ══════════════════════════════════════════════════════════════
+# MERGED AGENT 1: THREAT ASSESSOR (Watcher + Assessor in 1 call)
+# Replaces: run_watcher_agent + run_assessor_agent
+# Token savings: ~750 tokens per poll cycle (~65% reduction)
+# ══════════════════════════════════════════════════════════════
+
+class ThreatAssessmentResult(BaseModel):
+    # Weather fields (from Watcher)
+    severity: str
+    disaster_type: str
+    expected_impact: str
+    time_to_impact_hours: Optional[float] = None
+    # Survival fields (from Assessor)
+    survival_score_days: float
+    evacuation_urgency: str
+    missing_critical_items: List[str]
+    reasoning: str
+
+
+THREAT_ASSESSOR_PROMPT = """ROLE: You are the ThreatAssessor — a combined meteorological and survival analyst. You parse weather data AND evaluate household survival in a single step. This replaces two separate agents to save API quota.
+
+PHASE 1 — WEATHER CLASSIFICATION:
+Parse the weather payload (may be in Malay from MET Malaysia or contain 'OFFICIAL WARNING:' prefixes).
+1. Identify primary disaster type.
+2. Classify severity:
+   - critical: 'Red'/'Bahaya'/'OFFICIAL WARNING' with severe conditions or immediate impact.
+   - warning: precip ≥50mm/h OR wind ≥60km/h OR 'Yellow'/'Orange' OR 'Ribut petir'/'Hujan lebat'/'Berjerebu'.
+   - info: any other advisory or 'Hujan' mention.
+   - normal: 'Tiada hujan', no alerts, precip <10mm/h.
+3. Extract time_to_impact_hours from alerts[0].estimated_onset_hours (null if absent).
+4. Write one sentence describing human-level impact.
+
+PHASE 2 — SURVIVAL ASSESSMENT:
+Using the inventory and team provided:
+1. household_size = count of team members with role='family' (min 1).
+2. water_days = sum of Water items (Liters) / (household_size × 3).
+3. food_days = sum of Food items / (household_size × 2).
+4. survival_score_days = min(water_days, food_days), 2 decimal places.
+5. evacuation_urgency decision tree (follow EXACTLY):
+   - IF severity == 'critical' AND time_to_impact_hours ≤ 12 → 'immediate'
+   - ELSE IF severity == 'critical' OR (severity == 'warning' AND survival_score_days < 3) → 'prepare'
+   - ELSE IF severity == 'warning' OR severity == 'info' → 'shelter_in_place'
+   - ELSE → 'none'
+   - MOBILITY OVERRIDE: If any team member has severe mobility issues AND severity is warning/critical → escalate urgency one level.
+6. missing_critical_items: zero-stock critical items for the disaster_type (flood→flashlight/rope/waterproof bags; storm→radio/batteries; heatwave→water/electrolytes).
+7. reasoning: one sentence citing specific numbers (e.g. '2.1 days water for 3 people, warning flood → prepare.').
+
+OUTPUT (STRICT JSON — no markdown, no extra keys):
+{
+  "severity": "<critical|warning|info|normal>",
+  "disaster_type": "<flood|storm|heatwave|earthquake|fire|haze|none>",
+  "expected_impact": "<one sentence>",
+  "time_to_impact_hours": <float or null>,
+  "survival_score_days": <float 2dp>,
+  "evacuation_urgency": "<immediate|prepare|shelter_in_place|none>",
+  "missing_critical_items": ["<string>"],
+  "reasoning": "<one sentence with numbers>"
+}
+
+RULES: Return exactly these 8 keys. No markdown. If payload empty/malformed → severity=normal, disaster_type=none, urgency=none."""
+
+
+async def run_threat_assessor_agent(
+    raw_weather_json: str,
+    inventory: list,
+    team: list
+) -> ThreatAssessmentResult:
+    """Single Groq call replacing run_watcher_agent + run_assessor_agent."""
+    try:
+        household_size = len([m for m in team if m.get("role") == "family"]) or 1
+        user = (
+            f"Weather payload:\n{raw_weather_json}\n\n"
+            f"household_size: {household_size}\n"
+            f"team: {json.dumps(team)}\n"
+            f"inventory: {json.dumps(inventory)}"
+        )
+        result = await _call_groq(THREAT_ASSESSOR_PROMPT, user, max_tokens=600)
+        return ThreatAssessmentResult(**result)
+    except Exception as e:
+        print(f"[ThreatAssessor] Agent failed: {e}")
+        return ThreatAssessmentResult(
+            severity="normal",
+            disaster_type="none",
+            expected_impact="Assessment unavailable. Conditions assumed nominal pending retry.",
+            time_to_impact_hours=None,
+            survival_score_days=0.0,
+            evacuation_urgency="none",
+            missing_critical_items=["Analysis unavailable — please retry"],
+            reasoning="ThreatAssessor encountered an error. Check Groq quota."
         )
 
+
+# ══════════════════════════════════════════════════════════════
+# MERGED AGENT 2: PREPAREDNESS BRIEFING (Inventory + PACE in 1 call)
+# Replaces: run_inventory_analysis_agent + run_pace_agent
+# Token savings: ~1000 tokens per on-demand trigger
+# ══════════════════════════════════════════════════════════════
+
+class PreparednessBriefingResult(BaseModel):
+    # Inventory fields
+    survival_days_water: float
+    survival_days_food: float
+    overall_days: float
+    readiness_score: int
+    low_stock_items: List[str]
+    expiring_soon_items: List[str]
+    critical_gaps: List[str]
+    recommendations: List[str]
+    summary: str
+    reasoning: str
+    # PACE fields
+    pace_primary: str
+    pace_alternate: str
+    pace_contingency: str
+    pace_emergency: str
+    pace_reasoning: str
+
+
+PREPAREDNESS_BRIEFING_PROMPT = """ROLE: You are the Preparedness Briefing Officer — combining inventory audit and P.A.C.E. tactical planning in a single response to save API quota.
+
+PART A — INVENTORY AUDIT:
+INPUTS: inventory (list of {name, category, unit, current_amount, target_amount, expiry_date}), team.
+1. household_size = count of team members with role='family' (min 1).
+2. survival_days_water = sum of Water items (Liters) / (household_size × 3).
+3. survival_days_food = sum of Food items / (household_size × 2).
+4. overall_days = min(water_days, food_days).
+5. readiness_score (start 100): -20 if water<3d, -20 if food<3d, -15 if no Medical, -15 if no Power, -10 if any item current/target <0.30, -5 if any item expires within 30 days. Floor: 0.
+6. low_stock_items = names where current_amount/target_amount < 0.40 AND target_amount > 0.
+7. expiring_soon_items = names with expiry_date within 30 days of today.
+8. critical_gaps = category names entirely absent (check: Water, Food, Medical, Power, Shelter, Tools).
+9. Exactly 3 recommendations ordered by highest impact on overall_days.
+10. 1-2 sentence summary of preparedness posture.
+11. reasoning = step-by-step arithmetic for steps 2-5.
+
+PART B — P.A.C.E. PLAN:
+Using the same inventory and team, generate a 4-tier contingency doctrine.
+P.A.C.E. = Primary, Alternate, Contingency, Emergency. Each tier assumes the previous has FAILED.
+- primary: optimal action using all available resources.
+- alternate: second-best if Primary route/resource is blocked.
+- contingency: degraded fallback when infrastructure fails.
+- emergency: last-resort survival when all else has failed.
+- pace_reasoning: 2-3 sentences explaining the strategic logic.
+Reference actual inventory item names/quantities. If elderly >65 or children <12 in team, Primary must account for slower evacuation.
+
+OUTPUT (STRICT JSON — no markdown):
+{
+  "survival_days_water": <float>,
+  "survival_days_food": <float>,
+  "overall_days": <float>,
+  "readiness_score": <int>,
+  "low_stock_items": ["<str>"],
+  "expiring_soon_items": ["<str>"],
+  "critical_gaps": ["<str>"],
+  "recommendations": ["<str>", "<str>", "<str>"],
+  "summary": "<str>",
+  "reasoning": "<str>",
+  "pace_primary": "<1-2 tactical sentences>",
+  "pace_alternate": "<1-2 tactical sentences>",
+  "pace_contingency": "<1-2 tactical sentences>",
+  "pace_emergency": "<1-2 tactical sentences>",
+  "pace_reasoning": "<2-3 sentences>"
+}
+
+RULES: recommendations = exactly 3. critical_gaps = category names only. Each PACE tier assumes the previous failed. No markdown."""
+
+
+async def run_preparedness_briefing_agent(
+    inventory: list,
+    team: list,
+    location: str = "Malaysia"
+) -> PreparednessBriefingResult:
+    """Single Groq call replacing run_inventory_analysis_agent + run_pace_agent."""
+    try:
+        user = f"location: {location}\nteam: {json.dumps(team)}\ninventory: {json.dumps(inventory)}"
+        result = await _call_groq(PREPAREDNESS_BRIEFING_PROMPT, user, max_tokens=2000)
+        return PreparednessBriefingResult(**result)
+    except Exception as e:
+        print(f"[PreparednessBriefing] Agent failed: {e}")
+        return PreparednessBriefingResult(
+            survival_days_water=0.0, survival_days_food=0.0, overall_days=0.0,
+            readiness_score=0, low_stock_items=[], expiring_soon_items=[],
+            critical_gaps=["Analysis unavailable"],
+            recommendations=["Retry the analysis", "Check server logs", "Verify inventory data"],
+            summary="Preparedness briefing failed. Please retry.",
+            reasoning="Agent call failed — likely Groq quota exhaustion.",
+            pace_primary="Retry briefing when AI service is available.",
+            pace_alternate="Shelter in place, conserve resources, monitor official broadcasts.",
+            pace_contingency="Contact emergency services via 999 if situation escalates.",
+            pace_emergency="Signal for help and move to the nearest evacuation centre.",
+            pace_reasoning="Default guidance provided due to agent error."
+        )

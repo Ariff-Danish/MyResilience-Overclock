@@ -7,103 +7,21 @@ import requests
 import asyncio
 from datetime import datetime, timedelta
 from app.agents.safesync_agents import (
-    run_watcher_agent,
-    run_assessor_agent,
     run_coordinator_agent,
-    run_inventory_analysis_agent,
-    run_pace_agent,
     run_evacuation_advisor_agent,
+    run_threat_assessor_agent,
+    run_preparedness_briefing_agent,
+    WeatherAssessmentResult,
+    SurvivalResult,
+    PreparednessBriefingResult,
 )
 from app.agents.sms_tools import send_bulk_sms
-
-router = APIRouter()
-
-# ── Proximity threshold: alerts are suppressed if disaster is further than this ─
-PROXIMITY_ALERT_KM = 150.0
-
-
-# ── Haversine ──────────────────────────────────────────────────────────────────
-def haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
-    R = 6371
-    dlat = math.radians(lat2 - lat1)
-    dlng = math.radians(lng2 - lng1)
-    a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlng/2)**2
-    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-
-
-# ── Known Malaysian district/state → approx centre coordinates ────────────────
-# Used to compute distance between user and disaster location
-MALAYSIA_LOCATION_COORDS = {
-    # Klang Valley / Selangor
-    "petaling":      (3.1073, 101.6297),
-    "selangor":      (3.0738, 101.5183),
-    "kuala lumpur":  (3.1390, 101.6869),
-    "klang":         (3.0448, 101.4453),
-    "ampang":        (3.1478, 101.7470),
-    "hulu langat":   (3.0000, 101.8333),
-    "sepang":        (2.7297, 101.7054),
-    "gombak":        (3.2427, 101.7289),
-    "kuala selangor":(3.3400, 101.2500),
-    "sabak bernam":  (3.7667, 100.9833),
-    # Johor
-    "johor bahru":   (1.4927, 103.7414),
-    "johor":         (1.9344, 103.3587),
-    "kluang":        (2.0259, 103.3189),
-    "muar":          (2.0442, 102.5689),
-    # Kedah
-    "alor setar":    (6.1184, 100.3679),
-    "kedah":         (6.1184, 100.3679),
-    "langkawi":      (6.3500, 99.8000),
-    # Kelantan
-    "kota bharu":    (6.1254, 102.2381),
-    "kelantan":      (5.4000, 102.0000),
-    # Melaka
-    "melaka":        (2.1896, 102.2501),
-    # Negeri Sembilan
-    "seremban":      (2.7297, 101.9381),
-    "negeri sembilan":(2.7297, 101.9381),
-    # Pahang
-    "kuantan":       (3.8077, 103.3260),
-    "pahang":        (3.8077, 103.3260),
-    "cameron":       (4.4714, 101.3800),
-    # Penang
-    "penang":        (5.4141, 100.3288),
-    "georgetown":    (5.4141, 100.3288),
-    # Perak
-    "ipoh":          (4.5975, 101.0901),
-    "perak":         (4.5975, 101.0901),
-    # Perlis
-    "perlis":        (6.4449, 100.2048),
-    "kangar":        (6.4449, 100.2048),
-    # Putrajaya / Labuan
-    "putrajaya":     (2.9264, 101.6964),
-    "labuan":        (5.2831, 115.2308),
-    # Sabah
-    "kota kinabalu": (5.9804, 116.0735),
-    "sabah":         (5.9804, 116.0735),
-    "sandakan":      (5.8402, 118.1179),
-    "tawau":         (4.2449, 117.8912),
-    "lahad datu":    (5.0279, 118.3291),
-    "keningau":      (5.3363, 116.1637),
-    "ranau":         (5.9614, 116.6694),
-    # Sarawak
-    "kuching":       (1.5497, 110.3625),
-    "sarawak":       (1.5497, 110.3625),
-    "miri":          (4.3995, 113.9914),
-    "sibu":          (2.3000, 111.8167),
-    "bintulu":       (3.1667, 113.0333),
-    # Terengganu
-    "kuala terengganu": (5.3296, 103.1370),
-    "terengganu":    (5.3296, 103.1370),
-}
-
-def lookup_location_coords(location_text: str):
-    """Return (lat, lng) for a location string by fuzzy-matching our table."""
-    text = location_text.lower()
-    for key, coords in MALAYSIA_LOCATION_COORDS.items():
-        if key in text:
-            return coords
-    return None
+from app.utils.geo import (
+    haversine_km,
+    parse_location_from_warning_text,
+    get_coords_for_location,
+    MALAYSIA_LOCATION_COORDS,
+)
 
 
 # ── Nominatim reverse-geocode ──────────────────────────────────────────────────
@@ -121,7 +39,7 @@ def reverse_geocode(lat: float, lng: float) -> dict:
         addr = data.get("address", {})
         return {
             "display_name": data.get("display_name", ""),
-            "city":    addr.get("city") or addr.get("town") or addr.get("village") or addr.get("county", ""),
+            "city":    addr.get("city") or addr.get("town") or addr.get("municipality") or addr.get("village") or addr.get("suburb") or addr.get("county", ""),
             "state":   addr.get("state", ""),
             "country": addr.get("country", ""),
         }
@@ -249,17 +167,27 @@ async def fetch_mock_weather_data(
     return json.dumps(data)
 
 
-# ── Proximity filter for alerts ────────────────────────────────────────────────
+router = APIRouter()
+
+# ── Proximity threshold: alerts are suppressed if disaster is further than this ─
+PROXIMITY_ALERT_KM = 150.0
+
+
+# ── Proximity filter for alerts (uses geo utility for accurate parsing) ────────
 def filter_alerts_by_proximity(alerts: list, user_lat: float, user_lng: float) -> tuple[list, list]:
     """
     Split alerts into (nearby_alerts, distant_alerts).
+    Uses parse_location_from_warning_text for long official warning strings,
+    so state names inside paragraphs are correctly extracted.
     An alert is 'nearby' if its disaster location is within PROXIMITY_ALERT_KM of the user.
-    Alerts with no parseable location are included by default.
+    Alerts with no parseable location are included conservatively.
     """
     nearby, distant = [], []
     for alert in alerts:
         loc_text = alert.get("location", "")
-        disaster_coords = lookup_location_coords(loc_text)
+        # Use parse_location_from_warning_text for long warning paragraphs
+        location_key = parse_location_from_warning_text(loc_text)
+        disaster_coords = MALAYSIA_LOCATION_COORDS.get(location_key) if location_key else None
         if disaster_coords is None:
             # Can't determine location → include conservatively
             nearby.append({**alert, "proximity_km": None, "proximity_status": "unknown"})
@@ -365,25 +293,146 @@ async def live_weather(demo: bool = False, user_lat: Optional[float] = None, use
 
 @router.post("/generate_pace")
 async def generate_pace(req: RiskEvaluationRequest):
+    """
+    P.A.C.E. Strategic Plan — always returns a valid plan.
+
+    Tier 1: Deterministic engine computes plan from inventory data (no LLM, always works).
+    Tier 2: LLM enhances plan if Groq quota available. Falls back silently if not.
+    """
+    inv = [i.model_dump() for i in req.inventory]
+    team = [t.model_dump() for t in req.team]
+    loc = (req.location or "your area").split(",")[0].strip()
+
+    # ── Deterministic P.A.C.E. from inventory ──────────────────────────────────
+    household_size = max(1, sum(1 for m in team if m.get("role") == "family"))
+    has_elderly    = any(m.get("age", 0) > 65 for m in team)
+    has_children   = any(0 < m.get("age", 99) < 12 for m in team)
+
+    water_liters   = sum(i["current_amount"] for i in inv if i.get("category") == "Water")
+    food_units     = sum(i["current_amount"] for i in inv if i.get("category") == "Food")
+    has_medical    = any(i.get("category") == "Medical" for i in inv)
+    has_power      = any(i.get("category") == "Power" for i in inv)
+    has_tools      = any(i.get("category") == "Tools" for i in inv)
+
+    water_days = round(water_liters / (household_size * 3), 1) if water_liters > 0 else 0
+    food_days  = round(food_units  / (household_size * 2), 1) if food_units > 0  else 0
+    overall    = min(water_days, food_days)
+
+    # Mobility note for vulnerable members
+    mobility_note = ""
+    if has_elderly and has_children:
+        mobility_note = " Allow extra time — elderly and children in household require assisted movement."
+    elif has_elderly:
+        mobility_note = " Elderly member(s) present — ensure assisted evacuation and wheelchair/transport access."
+    elif has_children:
+        mobility_note = " Children present — designate a responsible adult per child during movement."
+
+    # Water/food resource line
+    if overall >= 7:
+        resource_line = f"Supplies sufficient for {overall:.0f} days ({water_liters:.0f}L water, {food_units:.0f} food units). Shelter-in-place is viable."
+    elif overall >= 3:
+        resource_line = f"Supplies last approximately {overall:.0f} days. Prioritise topping up water ({water_liters:.0f}L remaining) and food ({food_units:.0f} units) before evacuating."
+    else:
+        resource_line = f"Critical shortage — only {overall:.0f} days of combined supplies. Immediate resupply or evacuation to a welfare shelter is required."
+
+    # Support kit notes
+    kit_notes = []
+    if has_medical:
+        kit_notes.append("medical kit secured")
+    else:
+        kit_notes.append("NO medical kit — grab any medication first")
+    if has_power:
+        kit_notes.append("power backup available")
+    if has_tools:
+        kit_notes.append("tools/equipment staged")
+    kit_str = "; ".join(kit_notes)
+
+    computed_pace = {
+        "primary": (
+            f"Evacuate via designated safe route to nearest government evacuation centre (PPS) in {loc}. "
+            f"{resource_line} Pack go-bag with: {kit_str}.{mobility_note}"
+        ),
+        "alternate": (
+            f"If primary route is blocked: shelter with trusted neighbour or community building on high ground in {loc}. "
+            f"Ration remaining water ({water_liters:.0f}L) at 3L/person/day — sustains household of {household_size} for {water_days:.1f} days. "
+            f"Monitor NADMA portalbencana.nadma.gov.my and RTM for route updates."
+        ),
+        "contingency": (
+            f"Infrastructure failure mode — no route, no power. "
+            f"{'Deploy power backup for communication. ' if has_power else 'No power backup — use battery radio or phone sparingly. '}"
+            f"{'Use medical kit for first aid. ' if has_medical else 'No medical kit — improvise with available materials. '}"
+            f"Signal for help using whistle, mirror, or bright cloth from highest accessible point. "
+            f"Conserve food ({food_units:.0f} units) — reduce to 1 meal/day."
+        ),
+        "emergency": (
+            f"Last resort — all options exhausted. "
+            f"Move entire household to highest structural point of building or nearest elevated ground. "
+            f"{'Assist elderly/children first. ' if (has_elderly or has_children) else ''}"
+            f"Call 999 (Police/Rescue) or 994 (Bomba) — stay on line. "
+            f"Signal rescuers with any available means. Do not attempt water crossing on foot."
+        ),
+        "reasoning": (
+            f"P.A.C.E. computed from live inventory: {water_liters:.0f}L water ({water_days:.1f}d), "
+            f"{food_units:.0f} food units ({food_days:.1f}d), household of {household_size}. "
+            f"Each tier assumes the previous has failed. Medical={'Yes' if has_medical else 'No'}, "
+            f"Power={'Yes' if has_power else 'No'}. Sourced from: portalbencana.nadma.gov.my."
+        ),
+    }
+
+    # ── LLM Enhancement (optional — silently skipped if quota exhausted) ────────
     try:
-        inv = [i.model_dump() for i in req.inventory]
-        team = [t.model_dump() for t in req.team]
-        result = await run_pace_agent(inv, team, req.location)
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        briefing = await run_preparedness_briefing_agent(inv, team, loc)
+        # Only use LLM result if it's not the generic fallback text
+        is_fallback = "unavailable" in briefing.pace_primary.lower() or "retry" in briefing.pace_primary.lower()
+        if not is_fallback:
+            return {
+                "primary":     briefing.pace_primary,
+                "alternate":   briefing.pace_alternate,
+                "contingency": briefing.pace_contingency,
+                "emergency":   briefing.pace_emergency,
+                "reasoning":   briefing.pace_reasoning,
+                "source":      "llm",
+            }
+    except Exception as llm_err:
+        print(f"[PACE] LLM enhancement skipped (non-critical): {llm_err}")
+
+    # Return deterministic plan
+    return {**computed_pace, "source": "computed"}
 
 
 @router.post("/analyze_inventory")
 async def analyze_inventory(req: InventoryAnalysisRequest):
+    """
+    One Groq call replacing: Inventory Analyst + Coordinator.
+    Returns full inventory audit AND P.A.C.E. plan in a single response.
+    """
     try:
         inv = [i.model_dump() for i in req.inventory]
         team = [t.model_dump() for t in req.team]
-        analysis = await run_inventory_analysis_agent(inv, team)
-        coordinator = await run_coordinator_agent(inventory_analysis=analysis, team=team)
+        briefing = await run_preparedness_briefing_agent(inv, team)
+        b = briefing.model_dump()
         return {
-            "analysis": analysis.model_dump(),
-            "coordinator_message": coordinator.message_drafted
+            "analysis": {
+                "survival_days_water":  b["survival_days_water"],
+                "survival_days_food":   b["survival_days_food"],
+                "overall_days":         b["overall_days"],
+                "readiness_score":      b["readiness_score"],
+                "low_stock_items":      b["low_stock_items"],
+                "expiring_soon_items":  b["expiring_soon_items"],
+                "critical_gaps":        b["critical_gaps"],
+                "recommendations":      b["recommendations"],
+                "summary":              b["summary"],
+                "reasoning":            b["reasoning"],
+            },
+            "pace": {
+                "primary":     b["pace_primary"],
+                "alternate":   b["pace_alternate"],
+                "contingency": b["pace_contingency"],
+                "emergency":   b["pace_emergency"],
+                "reasoning":   b["pace_reasoning"],
+            },
+            # Legacy: coordinator_message kept for backward compatibility
+            "coordinator_message": b["summary"],
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -419,8 +468,23 @@ async def evaluate_risk(req: RiskEvaluationRequest, demo: bool = False):
         inv = [i.model_dump() for i in req.inventory]
         team = [t.model_dump() for t in req.team]
 
-        weather = await run_watcher_agent(raw_weather)
-        survival = await run_assessor_agent(weather, inv, team)
+        # ── MERGED: Single ThreatAssessor call replaces Watcher + Assessor (saves ~50% tokens)
+        threat = await run_threat_assessor_agent(raw_weather, inv, team)
+
+        # Unpack into legacy Watcher/Assessor shapes for Coordinator compatibility
+        weather = WeatherAssessmentResult(
+            severity=threat.severity,
+            disaster_type=threat.disaster_type,
+            expected_impact=threat.expected_impact,
+            time_to_impact_hours=threat.time_to_impact_hours,
+        )
+        survival = SurvivalResult(
+            survival_score_days=threat.survival_score_days,
+            evacuation_urgency=threat.evacuation_urgency,
+            missing_critical_items=threat.missing_critical_items,
+            reasoning=threat.reasoning,
+        )
+
         coordinator = await run_coordinator_agent(
             weather=weather, survival=survival, team=team, location=user_location_display
         )
@@ -434,7 +498,9 @@ async def evaluate_risk(req: RiskEvaluationRequest, demo: bool = False):
                     disaster_type=weather.disaster_type,
                     severity=weather.severity,
                     location=user_location_display,
-                    team=team
+                    team=team,
+                    user_lat=req.user_lat,
+                    user_lng=req.user_lng,
                 )
                 evac_data = evac_result.model_dump()
                 phone_numbers = [m.get("phone", "").strip() for m in team if m.get("phone", "").strip()]
@@ -488,7 +554,9 @@ async def evacuation_advisory(req: EvacuationAdvisoryRequest):
             disaster_type=req.disaster_type,
             severity=req.severity,
             location=location,
-            team=team_data
+            team=team_data,
+            user_lat=req.user_lat,
+            user_lng=req.user_lng,
         )
 
         sms_results = []
@@ -503,6 +571,87 @@ async def evacuation_advisory(req: EvacuationAdvisoryRequest):
             **result.model_dump(),
             "sms_results": sms_results,
             "resolved_location": location,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Request schema for inventory + PACE ───────────────────────────────────────
+class PreparednessBriefingRequest(BaseModel):
+    inventory: list = []
+    team: list = []
+    location: str = "Malaysia"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# /api/analyze_inventory
+# Called by frontend on every inventory/team change (debounced 1.5s).
+# Returns full inventory audit + readiness score + PACE plan in one Groq call.
+# ──────────────────────────────────────────────────────────────────────────────
+@router.post("/analyze_inventory")
+async def analyze_inventory(req: PreparednessBriefingRequest):
+    """
+    Run the merged Preparedness Briefing agent.
+    Returns inventory analysis AND P.A.C.E. plan in a single Groq call.
+    Frontend consumes: analysis.readiness_score, analysis.recommendations, etc.
+    """
+    try:
+        result: PreparednessBriefingResult = await run_preparedness_briefing_agent(
+            inventory=req.inventory,
+            team=req.team,
+            location=req.location,
+        )
+        r = result.model_dump()
+        return {
+            "analysis": {
+                "survival_days_water":  r["survival_days_water"],
+                "survival_days_food":   r["survival_days_food"],
+                "overall_days":         r["overall_days"],
+                "readiness_score":      r["readiness_score"],
+                "low_stock_items":      r["low_stock_items"],
+                "expiring_soon_items":  r["expiring_soon_items"],
+                "critical_gaps":        r["critical_gaps"],
+                "recommendations":      r["recommendations"],
+                "summary":              r["summary"],
+                "reasoning":            r["reasoning"],
+            },
+            # Also include PACE in same response so frontend can cache it
+            "pace": {
+                "primary":     r["pace_primary"],
+                "alternate":   r["pace_alternate"],
+                "contingency": r["pace_contingency"],
+                "emergency":   r["pace_emergency"],
+                "reasoning":   r["pace_reasoning"],
+            },
+            "coordinator_message": r["summary"],
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# /api/generate_pace
+# Called separately by frontend — returns just the P.A.C.E. plan object.
+# Uses the same merged briefing agent to avoid extra token cost.
+# ──────────────────────────────────────────────────────────────────────────────
+@router.post("/generate_pace")
+async def generate_pace(req: PreparednessBriefingRequest):
+    """
+    Generate the P.A.C.E. contingency doctrine for the household.
+    Returns: { primary, alternate, contingency, emergency, reasoning }
+    """
+    try:
+        result: PreparednessBriefingResult = await run_preparedness_briefing_agent(
+            inventory=req.inventory,
+            team=req.team,
+            location=req.location,
+        )
+        return {
+            "primary":     result.pace_primary,
+            "alternate":   result.pace_alternate,
+            "contingency": result.pace_contingency,
+            "emergency":   result.pace_emergency,
+            "reasoning":   result.pace_reasoning,
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
