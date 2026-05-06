@@ -452,8 +452,21 @@ async def run_coordinator_agent(
     settings_pref=None
 ) -> CoordinatorResult:
     try:
-        contacts = [m for m in team if m.get("role") == "emergency_contact"]
-        user = f"location: {location}\ncontacts: {json.dumps([{'name': c['name'], 'email': c.get('email', '')} for c in contacts])}\n"
+        # Normalize team to dicts (some callers pass Pydantic objects, some pass dicts)
+        team_dicts = []
+        for m in team:
+            if hasattr(m, "model_dump"):
+                team_dicts.append(m.model_dump())
+            elif isinstance(m, dict):
+                team_dicts.append(m)
+            else:
+                # Fallback for generic objects
+                team_dicts.append(vars(m) if hasattr(m, "__dict__") else m)
+
+        contacts = [m for m in team_dicts if m.get("role") == "emergency_contact"]
+        user = f"location: {location}\n"
+        user += f"team: {json.dumps([{'name': m.get('name'), 'role': m.get('role')} for m in team_dicts])}\n"
+        user += f"contacts: {json.dumps([{'name': c.get('name'), 'email': c.get('email', '')} for c in contacts])}\n"
         if weather:
             user += f"weather: {weather.model_dump_json()}\n"
         if survival:

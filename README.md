@@ -241,6 +241,27 @@ Toggle **Live Demo Mode** in the dashboard to simulate a critical flash flood sc
 
 ---
 
+---
+
+## 🚀 Deployment (Vercel)
+
+This project is configured for easy deployment as a monorepo on **Vercel**.
+
+### Configuration
+- **Frontend**: React (Vite)
+- **Backend**: FastAPI (Python Serverless)
+- **Routing**: `vercel.json` manages API routing to the serverless function.
+
+### Steps
+1. Push your code to GitHub.
+2. Connect the repository to Vercel.
+3. In **Project Settings > Environment Variables**, add all keys from `.env.example`.
+4. Set the **Build Command** to: `cd frontend && npm install && npm run build`
+5. Set the **Output Directory** to: `frontend/dist`
+6. Deploy. Vercel will automatically detect the `vercel.json` and `api/index.py` for your backend.
+
+---
+
 ## 🛡️ Resilience Features
 
 - **Agent-level fallbacks**: Every agent returns a safe default if the LLM call fails
@@ -248,6 +269,10 @@ Toggle **Live Demo Mode** in the dashboard to simulate a critical flash flood sc
 - **No-guess policy**: Watcher returns `null` for unknown impact times instead of fabricating data
 - **Change detection**: Alert hash comparison prevents redundant agent runs
 - **Privacy by default**: All location and notification features are OFF by default; user opts in explicitly
+
+---
+
+Developed for the **V2 AI Hackathon**.
 
 ---
 

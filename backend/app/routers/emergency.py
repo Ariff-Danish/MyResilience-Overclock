@@ -150,19 +150,55 @@ async def fetch_met_weather(user_location_name: str = "Petaling") -> dict:
 
 async def fetch_mock_weather_data(
     demo: bool = False,
-    user_location_name: str = "Petaling"
+    user_location_name: str = "Petaling",
+    demo_scenario: int = 1,
 ) -> str:
+    """
+    Demo scenarios:
+      1 = Prepared   + Danger     (critical Red Alert)
+      2 = Prepared   + No Danger  (clear weather)
+      3 = Unprepared + Danger     (critical Red Alert)
+      4 = Unprepared + No Danger  (clear weather)
+    Scenarios 2 and 4 (non-danger) return nominal weather regardless.
+    Scenarios 1 and 3 (danger) inject a severe Red Alert.
+    """
     if demo:
-        return json.dumps({
-            "location": f"{user_location_name}, Malaysia",
-            "current_conditions": {"temperature_celsius": 28, "precipitation_mm_per_hour": 150, "wind_speed_kmh": 65},
-            "alerts": [{
-                "type": "Red Alert",
-                "description": "Severe flash flood warning. Rivers exceeding danger levels.",
-                "estimated_onset_hours": 2.5,
-                "location": user_location_name,
-            }]
-        })
+        is_danger = demo_scenario in (1, 3)
+        if is_danger:
+            return json.dumps({
+                "location": f"{user_location_name}, Malaysia",
+                "current_conditions": {
+                    "temperature_celsius": 28,
+                    "precipitation_mm_per_hour": 150,
+                    "wind_speed_kmh": 65,
+                    "summary": "Ribut petir",
+                    "morning": "Ribut petir",
+                    "afternoon": "Ribut petir",
+                    "night": "Hujan lebat",
+                },
+                "official_warnings_count": 1,
+                "alerts": [{
+                    "type": "OFFICIAL WARNING: Red Alert — Flash Flood",
+                    "description": "Severe flash flood warning. Rivers exceeding danger levels. Evacuation advised immediately.",
+                    "estimated_onset_hours": 2.5,
+                    "location": user_location_name,
+                }]
+            })
+        else:
+            return json.dumps({
+                "location": f"{user_location_name}, Malaysia",
+                "current_conditions": {
+                    "temperature_celsius": 30,
+                    "precipitation_mm_per_hour": 0,
+                    "wind_speed_kmh": 10,
+                    "summary": "Tiada hujan",
+                    "morning": "Tiada hujan",
+                    "afternoon": "Berawan",
+                    "night": "Tiada hujan",
+                },
+                "official_warnings_count": 0,
+                "alerts": []
+            })
     data = await fetch_met_weather(user_location_name)
     return json.dumps(data)
 
@@ -257,7 +293,7 @@ class EvacuationAdvisoryRequest(BaseModel):
 
 # ── Routes ─────────────────────────────────────────────────────────────────────
 @router.get("/weather/live")
-async def live_weather(demo: bool = False, user_lat: Optional[float] = None, user_lng: Optional[float] = None):
+async def live_weather(demo: bool = False, demo_scenario: int = 1, user_lat: Optional[float] = None, user_lng: Optional[float] = None):
     """
     Returns live MET Malaysia weather for the user's actual location.
     If user_lat/lng provided: reverse-geocodes to find their district, fetches local MET data.
@@ -277,7 +313,7 @@ async def live_weather(demo: bool = False, user_lat: Optional[float] = None, use
             user_location_display = f"{city}, {state}, Malaysia" if city and state else f"{state}, Malaysia"
 
         # Step 2: Fetch MET weather for user's location
-        data = json.loads(await fetch_mock_weather_data(demo, user_location_name))
+        data = json.loads(await fetch_mock_weather_data(demo, user_location_name, demo_scenario))
 
         # Step 3: Proximity-filter alerts if user location is known
         if user_lat is not None and user_lng is not None:
@@ -459,7 +495,7 @@ async def analyze_inventory(req: InventoryAnalysisRequest):
 
 
 @router.post("/evaluate_risk")
-async def evaluate_risk(req: RiskEvaluationRequest, demo: bool = False):
+async def evaluate_risk(req: RiskEvaluationRequest, demo: bool = False, demo_scenario: int = 1):
     try:
         # Resolve user location
         user_location_name = "Petaling"
@@ -472,7 +508,7 @@ async def evaluate_risk(req: RiskEvaluationRequest, demo: bool = False):
             user_location_name = city or state or "Petaling"
             user_location_display = f"{city}, {state}, Malaysia" if city and state else req.location
 
-        raw_weather = await fetch_mock_weather_data(demo, user_location_name)
+        raw_weather = await fetch_mock_weather_data(demo, user_location_name, demo_scenario)
         weather_dict = json.loads(raw_weather)
 
         # Proximity filter: suppress distant alerts

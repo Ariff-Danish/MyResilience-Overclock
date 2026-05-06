@@ -15,7 +15,60 @@ const haversineKm = (lat1, lng1, lat2, lng2) => {
 function App() {
   const [activeTab, setActiveTab] = useState('dashboard')
   const [demoMode, setDemoMode] = useState(false)
+  const [demoScenario, setDemoScenario] = useState(1)
   const [isSidebarOpen, setSidebarOpen] = useState(true)
+
+  // ── Demo Scenario Presets ──────────────────────────────────────────────────────
+  const DEMO_SCENARIOS = [
+    {
+      id: 1, label: 'Prepared + Danger',
+      badge: '🔴', badgeClass: 'scenario-danger',
+      desc: 'Full supplies · Active Red Alert',
+      inventory: [
+        { id: 'd1', name: 'Bottled Water', category: 'Water', unit: 'Liters', current_amount: 60, target_amount: 60, expiry_date: '2028-01-01' },
+        { id: 'd2', name: 'Emergency Rations', category: 'Food', unit: 'Servings', current_amount: 40, target_amount: 40, expiry_date: '2027-06-01' },
+        { id: 'd3', name: 'First Aid Kit', category: 'Medical', unit: 'Kits', current_amount: 2, target_amount: 2, expiry_date: '2028-01-01' },
+        { id: 'd4', name: 'Portable Generator', category: 'Power', unit: 'Units', current_amount: 1, target_amount: 1, expiry_date: '' },
+        { id: 'd5', name: 'Emergency Tent', category: 'Shelter', unit: 'Units', current_amount: 1, target_amount: 1, expiry_date: '' },
+        { id: 'd6', name: 'Satellite Phone', category: 'Communication', unit: 'Units', current_amount: 1, target_amount: 1, expiry_date: '' },
+        { id: 'd7', name: 'Multi-Tool Kit', category: 'Tools', unit: 'Sets', current_amount: 1, target_amount: 1, expiry_date: '' },
+        { id: 'd8', name: 'Hygiene Kit', category: 'Hygiene', unit: 'Kits', current_amount: 3, target_amount: 3, expiry_date: '2027-01-01' },
+      ]
+    },
+    {
+      id: 2, label: 'Prepared + No Danger',
+      badge: '🟢', badgeClass: 'scenario-safe',
+      desc: 'Full supplies · Clear weather',
+      inventory: [
+        { id: 'd1', name: 'Bottled Water', category: 'Water', unit: 'Liters', current_amount: 60, target_amount: 60, expiry_date: '2028-01-01' },
+        { id: 'd2', name: 'Emergency Rations', category: 'Food', unit: 'Servings', current_amount: 40, target_amount: 40, expiry_date: '2027-06-01' },
+        { id: 'd3', name: 'First Aid Kit', category: 'Medical', unit: 'Kits', current_amount: 2, target_amount: 2, expiry_date: '2028-01-01' },
+        { id: 'd4', name: 'Portable Generator', category: 'Power', unit: 'Units', current_amount: 1, target_amount: 1, expiry_date: '' },
+        { id: 'd5', name: 'Emergency Tent', category: 'Shelter', unit: 'Units', current_amount: 1, target_amount: 1, expiry_date: '' },
+        { id: 'd6', name: 'Satellite Phone', category: 'Communication', unit: 'Units', current_amount: 1, target_amount: 1, expiry_date: '' },
+        { id: 'd7', name: 'Multi-Tool Kit', category: 'Tools', unit: 'Sets', current_amount: 1, target_amount: 1, expiry_date: '' },
+        { id: 'd8', name: 'Hygiene Kit', category: 'Hygiene', unit: 'Kits', current_amount: 3, target_amount: 3, expiry_date: '2027-01-01' },
+      ]
+    },
+    {
+      id: 3, label: 'Not Prepared + Danger',
+      badge: '🚨', badgeClass: 'scenario-critical',
+      desc: 'Critical gaps · Active Red Alert',
+      inventory: [
+        { id: 'd1', name: 'Bottled Water', category: 'Water', unit: 'Liters', current_amount: 2, target_amount: 30, expiry_date: '2027-01-01' },
+        { id: 'd2', name: 'Canned Food', category: 'Food', unit: 'Cans', current_amount: 1, target_amount: 20, expiry_date: '2025-06-01' },
+      ]
+    },
+    {
+      id: 4, label: 'Not Prepared + No Danger',
+      badge: '🟡', badgeClass: 'scenario-warn',
+      desc: 'Critical gaps · Clear weather',
+      inventory: [
+        { id: 'd1', name: 'Bottled Water', category: 'Water', unit: 'Liters', current_amount: 2, target_amount: 30, expiry_date: '2027-01-01' },
+        { id: 'd2', name: 'Canned Food', category: 'Food', unit: 'Cans', current_amount: 1, target_amount: 20, expiry_date: '2025-06-01' },
+      ]
+    },
+  ]
 
   // Core State
   const DEFAULT_INVENTORY = [
@@ -82,6 +135,21 @@ function App() {
   const [userLocation, setUserLocation] = useState(null)
   const [locationLoading, setLocationLoading] = useState(false)
   const [locationError, setLocationError] = useState(null)
+
+  // Inject demo scenario inventory when demo mode or scenario changes
+  const [preDemoInventory, setPreDemoInventory] = useState(null)
+  useEffect(() => {
+    if (demoMode) {
+      if (preDemoInventory === null) setPreDemoInventory(inventory)
+      const scenario = DEMO_SCENARIOS.find(s => s.id === demoScenario)
+      if (scenario) setInventory(scenario.inventory)
+    } else {
+      if (preDemoInventory !== null) {
+        setInventory(preDemoInventory)
+        setPreDemoInventory(null)
+      }
+    }
+  }, [demoMode, demoScenario])
 
   useEffect(() => {
     if (settings.locationTracking && !userLocation && !locationError && !locationLoading) {
@@ -150,7 +218,7 @@ function App() {
     // This eliminates the duplicate token burn from calling generate_pace separately
     const location = userRegionDisplay || 'Malaysia'
     try {
-      const invRes = await fetch('http://localhost:8000/api/analyze_inventory', {
+      const invRes = await fetch('/api/analyze_inventory', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ inventory, team, location, settings })
@@ -261,7 +329,8 @@ function App() {
         const locParams = userLocation
           ? `&user_lat=${userLocation.lat}&user_lng=${userLocation.lng}`
           : ''
-        const res = await fetch(`http://localhost:8000/api/weather/live?demo=${demoMode}${locParams}`)
+        const scenarioParam = demoMode ? `&demo_scenario=${demoScenario}` : ''
+        const res = await fetch(`/api/weather/live?demo=${demoMode}${scenarioParam}${locParams}`)
         if (res.ok) {
           const data = await res.json()
           setLiveWeather(data)
@@ -305,7 +374,7 @@ function App() {
       clearInterval(warningInterval)
       clearInterval(dailyInterval)
     }
-  }, [demoMode, lastAlertHash, inventory, team, userLocation])
+  }, [demoMode, demoScenario, lastAlertHash, inventory, team, userLocation])
 
 
   // --- LEAFLET MAP LIFECYCLE ---
@@ -468,7 +537,7 @@ function App() {
         location: userRegionDisplay || 'Kuala Lumpur, Malaysia',
         ...(userLocation ? { user_lat: userLocation.lat, user_lng: userLocation.lng } : {})
       }
-      const res = await fetch(`http://localhost:8000/api/evaluate_risk?demo=${demoMode}`, {
+      const res = await fetch(`/api/evaluate_risk?demo=${demoMode}&demo_scenario=${demoScenario}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
       })
@@ -690,6 +759,9 @@ function App() {
           <span className="header-status-badge">
             {liveWeather?.alerts?.length > 0 ? '🔴 THREAT ACTIVE' : '🟢 NOMINAL'}
           </span>
+          {demoMode && (
+            <span className="demo-active-badge">⚗ DEMO MODE</span>
+          )}
         </div>
         <div style={{display:'flex', alignItems:'center', gap:'1.25rem', flexWrap:'wrap'}}>
           {userRegionDisplay && (
@@ -707,6 +779,29 @@ function App() {
           </div>
         </div>
       </div>
+
+      {demoMode && (
+        <div className="scenario-selector-panel">
+          <div className="scenario-selector-label">
+            <span className="tech-font" style={{fontSize:'0.7rem', color:'var(--warning)', letterSpacing:'1px', textTransform:'uppercase'}}>⚗ Demo Scenario</span>
+            <span className="text-muted" style={{fontSize:'0.72rem'}}>
+              {DEMO_SCENARIOS.find(s => s.id === demoScenario)?.desc}
+            </span>
+          </div>
+          <div className="scenario-btn-group">
+            {DEMO_SCENARIOS.map(s => (
+              <button
+                key={s.id}
+                className={`scenario-btn ${s.badgeClass} ${demoScenario === s.id ? 'active' : ''}`}
+                onClick={() => setDemoScenario(s.id)}
+              >
+                <span>{s.badge}</span>
+                <span>{s.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="dashboard-grid">
         <div className="panel radar-panel">
