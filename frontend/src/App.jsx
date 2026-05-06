@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
-import { Activity, ShieldAlert, PackageSearch, Users, Radar, Settings, AlertTriangle, ShieldCheck, ChevronDown, ChevronRight, Filter } from 'lucide-react'
-import { Radar as RechartsRadar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer } from 'recharts'
+import { Activity, ShieldAlert, PackageSearch, Users, Radar, AlertTriangle, ShieldCheck, ChevronDown, ChevronRight, Filter, Menu, ChevronLeft, Map, Phone, Copy, Navigation, FileDown, ChevronUp } from 'lucide-react'
+import { Radar as RechartsRadar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip } from 'recharts'
 import './App.css'
 
 function App() {
@@ -9,17 +9,29 @@ function App() {
   const [isSidebarOpen, setSidebarOpen] = useState(true)
 
   // Core State
-  const [inventory, setInventory] = useState([
+  const DEFAULT_INVENTORY = [
     { id: '1', name: 'Bottled Water', category: 'Water', unit: 'Liters', current_amount: 10, target_amount: 30, expiry_date: '2027-01-01' },
     { id: '2', name: 'Canned Beans', category: 'Food', unit: 'Cans', current_amount: 5, target_amount: 20, expiry_date: '2026-05-01' },
     { id: '3', name: 'First Aid Kit', category: 'Medical', unit: 'Kits', current_amount: 1, target_amount: 1, expiry_date: '2028-01-01' },
     { id: '4', name: 'Power Bank', category: 'Power', unit: 'Units', current_amount: 1, target_amount: 3, expiry_date: '' },
-  ])
+  ]
 
-  const [team, setTeam] = useState([
+  const DEFAULT_TEAM = [
     { id: '1', name: 'John Doe', age: 35, role: 'family', email: '', phone: '' },
     { id: '2', name: 'Jane Doe', age: 32, role: 'family', email: '', phone: '' }
-  ])
+  ]
+
+  const [inventory, setInventory] = useState(() => {
+    try { const s = localStorage.getItem('myresilience_inventory'); return s ? JSON.parse(s) : DEFAULT_INVENTORY } catch { return DEFAULT_INVENTORY }
+  })
+
+  const [team, setTeam] = useState(() => {
+    try { const s = localStorage.getItem('myresilience_team'); return s ? JSON.parse(s) : DEFAULT_TEAM } catch { return DEFAULT_TEAM }
+  })
+
+  // Persist to localStorage
+  useEffect(() => { localStorage.setItem('myresilience_inventory', JSON.stringify(inventory)) }, [inventory])
+  useEffect(() => { localStorage.setItem('myresilience_team', JSON.stringify(team)) }, [team])
 
   // Sorting State
   const [sortBy, setSortBy] = useState('category') // category, stock, expiry
@@ -30,6 +42,20 @@ function App() {
   const [recentAlert, setRecentAlert] = useState(null)
   const [liveWeather, setLiveWeather] = useState(null)
   const [lastAlertHash, setLastAlertHash] = useState('') // For change detection
+  const [weatherSyncTime, setWeatherSyncTime] = useState(null)
+  const [evacAdvisory, setEvacAdvisory] = useState(null)
+  const [evacLoading, setEvacLoading] = useState(false)
+  const leafletInstanceRef = useRef(null)
+  // B2 — Readiness Score Trend
+  const [scoreHistory, setScoreHistory] = useState(() => {
+    try { const s = localStorage.getItem('myresilience_score_history'); return s ? JSON.parse(s) : [] } catch { return [] }
+  })
+  // B4 — Disaster Type Selector
+  const [selectedDisasterType, setSelectedDisasterType] = useState('auto')
+  // B1 — Shelter expand state
+  const [expandedShelter, setExpandedShelter] = useState(null)
+  // B3 — Copy SMS feedback
+  const [smsCopied, setSmsCopied] = useState(false)
   
   // Grouped Activity Log
   const [activityEvents, setActivityEvents] = useState([
@@ -88,6 +114,13 @@ function App() {
         const payload = await invRes.json()
         invData = payload.analysis
         setInventoryAnalysis(invData)
+        // B2 — Track score history (keep last 10)
+        setScoreHistory(prev => {
+          const entry = { t: new Date().toLocaleTimeString('en-MY', { hour: '2-digit', minute: '2-digit' }), score: invData.readiness_score }
+          const next = [...prev, entry].slice(-10)
+          localStorage.setItem('myresilience_score_history', JSON.stringify(next))
+          return next
+        })
         reasonString += `[Assessor Agent] ${invData.reasoning}\n\n`
         if (payload.coordinator_message) {
           reasonString += `[Coordinator Agent] PREPAREDNESS PROTOCOL:\n${payload.coordinator_message}\n\n`
@@ -126,6 +159,50 @@ function App() {
     }
   }
 
+  // --- EVACUATION ADVISOR ---
+  const runEvacuationAdvisory = async (sendSms = false) => {
+    setEvacLoading(true)
+    setExpandedShelter(null)
+    try {
+      // B4 — Use selected type or fall back to live alert type
+      const disasterType = selectedDisasterType !== 'auto'
+        ? selectedDisasterType
+        : (recentAlert?.weather_disaster_type || 'flood')
+      const severity = recentAlert?.weather_severity || 'warning'
+      const res = await fetch('http://localhost:8000/api/evacuation_advisory', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          disaster_type: disasterType,
+          severity: severity,
+          location: 'Petaling Jaya, Malaysia',
+          team: team,
+          send_sms_alerts: sendSms
+        })
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setEvacAdvisory(data)
+        const smsInfo = sendSms
+          ? ` SMS dispatched to ${data.sms_results?.filter(r => r.status === 'sent').length || 0} contact(s).`
+          : ''
+        logEvent(
+          'Evacuation Advisory Generated',
+          `Threat Map — ${sendSms ? 'SMS Alert Mode' : 'Advisory Only'}`,
+          ['Evacuation Advisor', 'Coordinator'],
+          `${data.reasoning}${smsInfo}`,
+          sendSms ? 'error' : 'warning'
+        )
+      } else {
+        const err = await res.json().catch(() => ({}))
+        logEvent('Evacuation Advisor Error', 'Threat Map', ['System'], err.detail || `HTTP ${res.status}`, 'error')
+      }
+    } catch (err) {
+      logEvent('Evacuation Advisor Unreachable', 'Threat Map', ['System'], `Backend connection failed: ${err.message}`, 'error')
+    }
+    setEvacLoading(false)
+  }
+
   // --- LIVE POLLING & DEMO MODE ---
   useEffect(() => {
     const pollWeather = async (isDaily = false) => {
@@ -134,6 +211,7 @@ function App() {
         if (res.ok) {
           const data = await res.json()
           setLiveWeather(data)
+          setWeatherSyncTime(new Date().toLocaleTimeString('en-MY', { hour: '2-digit', minute: '2-digit' }))
           
           const alertString = JSON.stringify(data.alerts)
           
@@ -169,6 +247,66 @@ function App() {
     }
   }, [demoMode, lastAlertHash, inventory, team])
 
+  // --- LEAFLET MAP LIFECYCLE ---
+  useEffect(() => {
+    if (activeTab !== 'threatmap') {
+      if (leafletInstanceRef.current) {
+        leafletInstanceRef.current.remove()
+        leafletInstanceRef.current = null
+      }
+      return
+    }
+    if (!evacAdvisory) return
+
+    const timer = setTimeout(() => {
+      const container = document.getElementById('leaflet-threat-map')
+      if (!container) return
+      if (leafletInstanceRef.current) {
+        leafletInstanceRef.current.remove()
+        leafletInstanceRef.current = null
+      }
+      const L = window.L
+      if (!L) { console.error('Leaflet not loaded'); return }
+
+      const map = L.map('leaflet-threat-map', { zoomControl: true }).setView([3.1073, 101.6297], 13)
+      leafletInstanceRef.current = map
+
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© <a href="https://openstreetmap.org">OpenStreetMap</a> contributors',
+        maxZoom: 18
+      }).addTo(map)
+
+      // Force correct size after container paint
+      setTimeout(() => {
+        map.invalidateSize()
+        map.setView([3.1073, 101.6297], 13)
+      }, 300)
+
+      const makeIcon = (emoji) => L.divIcon({
+        html: `<div style="font-size:24px;line-height:1;filter:drop-shadow(0 1px 2px rgba(0,0,0,0.6))">${emoji}</div>`,
+        className: '',
+        iconSize: [32, 32],
+        iconAnchor: [16, 16]
+      })
+
+      evacAdvisory.shelter_locations?.forEach(loc => {
+        L.marker([loc.lat, loc.lng], { icon: makeIcon('🏠') })
+          .addTo(map)
+          .bindPopup(`<b style="color:#16a34a">🏠 Shelter</b><br><b>${loc.name}</b><br><span style="color:#6b7280;font-size:12px">${loc.address}</span>`)
+      })
+
+      const agencyEmoji = { police: '🚔', fire: '🚒', hospital: '🏥', nadma: '🏛️' }
+      evacAdvisory.enforcement_agencies?.forEach(agency => {
+        const emoji = agencyEmoji[agency.type] || '📍'
+        L.marker([agency.lat, agency.lng], { icon: makeIcon(emoji) })
+          .addTo(map)
+          .bindPopup(`<b style="color:#2563eb">${emoji} ${agency.type?.toUpperCase()}</b><br><b>${agency.name}</b><br><span style="color:#6b7280;font-size:12px">${agency.address}</span>`)
+      })
+    }, 250)
+
+    return () => clearTimeout(timer)
+  }, [activeTab, evacAdvisory])
+
   const triggerLiveAlert = async (alertType, desc) => {
     try {
       const res = await fetch(`http://localhost:8000/api/evaluate_risk?demo=${demoMode}`, {
@@ -178,14 +316,35 @@ function App() {
       if (res.ok) {
         const data = await res.json()
         setRecentAlert(data)
-        
-        let reason = `Watcher identified ${alertType}: ${desc}. `
-        reason += `Coordinator decided action: ${data.action_taken.toUpperCase()}. `
-        if (data.action_taken === 'email_sent') {
-           reason += `Coordinator dispatched emergency protocol to ${data.contacts_notified.length} contacts.`
+
+        // AUTO-POPULATE Threat Map tab when backend auto-generated an advisory
+        if (data.evacuation_advisory) {
+          setEvacAdvisory({
+            ...data.evacuation_advisory,
+            sms_results: data.sms_auto_results || []
+          })
         }
-        
-        logEvent('CRITICAL THREAT ESCALATION', 'External Trigger (MET Sync)', ['Watcher', 'Coordinator'], reason, 'error')
+
+        let reason = `Watcher identified ${alertType}: ${desc}.\n`
+        reason += `Assessor urgency: ${data.evacuation_urgency?.toUpperCase()}. `
+        reason += `Coordinator action: ${data.action_taken?.toUpperCase()}.`
+
+        if (data.evacuation_advisory) {
+          const smsSent = data.sms_auto_results?.filter(r => r.status === 'sent').length || 0
+          const smsSkipped = data.sms_auto_results?.filter(r => r.status === 'skipped').length || 0
+          reason += `\n\n[AUTO-EVAC] Evacuation Advisory auto-generated.\n`
+          reason += `[AUTO-SMS] ${smsSent} SMS sent, ${smsSkipped} skipped. Open Threat Map tab to view full advisory.`
+        }
+
+        logEvent(
+          'CRITICAL THREAT ESCALATION',
+          'External Trigger (MET Sync)',
+          data.evacuation_advisory
+            ? ['Watcher', 'Assessor', 'Coordinator', 'Evacuation Advisor']
+            : ['Watcher', 'Assessor', 'Coordinator'],
+          reason,
+          'error'
+        )
       }
     } catch (err) {
       console.error(err)
@@ -249,6 +408,26 @@ function App() {
     return arr;
   }
 
+  // --- MALAY WEATHER TRANSLATOR ---
+  const translateWeather = (summary) => {
+    if (!summary) return { en: '\u2014', icon: '\uD83C\uDF24\uFE0F' }
+    const map = [
+      ['Ribut petir', { en: 'Thunderstorm', icon: '\u26C8\uFE0F' }],
+      ['Ribut', { en: 'Storm', icon: '\uD83C\uDF29\uFE0F' }],
+      ['Berjerebu', { en: 'Haze ⚠️ Air quality risk', icon: '\uD83C\uDF2B\uFE0F' }],
+      ['Hujan lebat', { en: 'Heavy rain', icon: '\u26C8\uFE0F' }],
+      ['Hujan ringan', { en: 'Light rain', icon: '\uD83C\uDF26\uFE0F' }],
+      ['Hujan', { en: 'Rain', icon: '\uD83C\uDF27\uFE0F' }],
+      ['Berawan', { en: 'Cloudy', icon: '\u2601\uFE0F' }],
+      ['Panas', { en: 'Hot & sunny', icon: '\u2600\uFE0F' }],
+      ['Tiada hujan', { en: 'No rain expected', icon: '\u2600\uFE0F' }],
+    ]
+    for (const [key, val] of map) {
+      if (summary.toLowerCase().includes(key.toLowerCase())) return val
+    }
+    return { en: summary, icon: '\uD83C\uDF21\uFE0F' }
+  }
+
   // --- UI RENDERERS ---
   const getRadarData = () => {
     if (!inventoryAnalysis) return []
@@ -260,6 +439,59 @@ function App() {
       { subject: 'Power', A: inventory.some(i => i.category === 'Power' && i.current_amount > 0) ? 80 : 10, fullMark: 100 },
       { subject: 'Readiness', A: inventoryAnalysis.readiness_score, fullMark: 100 },
     ]
+  }
+
+  // B3 — Quick Actions helpers
+  const handleCopySms = () => {
+    if (evacAdvisory?.sms_alert_text) {
+      navigator.clipboard.writeText(evacAdvisory.sms_alert_text)
+      setSmsCopied(true)
+      setTimeout(() => setSmsCopied(false), 2000)
+    }
+  }
+
+  const handleShareLocation = () => {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(pos => {
+        const { latitude, longitude } = pos.coords
+        const url = `https://maps.google.com/?q=${latitude},${longitude}`
+        if (navigator.share) {
+          navigator.share({ title: 'MyResilience — My Location', url })
+        } else {
+          window.open(url, '_blank')
+        }
+      }, () => window.open('https://maps.google.com', '_blank'))
+    } else {
+      window.open('https://maps.google.com', '_blank')
+    }
+  }
+
+  const handleDownloadAdvisory = () => {
+    if (!evacAdvisory) return
+    const lines = [
+      '=== MYRESILIENCE EVACUATION ADVISORY ===',
+      `Generated: ${new Date().toLocaleString('en-MY')}`,
+      '',
+      '--- SMS ALERT ---',
+      evacAdvisory.sms_alert_text || '',
+      '',
+      '--- SAFE ROUTES ---',
+      ...(evacAdvisory.routes_to_take || []).map((r, i) => `${i + 1}. ${r}`),
+      '',
+      '--- AREAS TO AVOID ---',
+      ...(evacAdvisory.areas_to_avoid || []).map(a => `⛔ ${a}`),
+      '',
+      '--- SHELTER LOCATIONS ---',
+      ...(evacAdvisory.shelter_locations || []).map(s => `• ${s.name} — ${s.address}`),
+      '',
+      '--- ADVISOR REASONING ---',
+      evacAdvisory.reasoning || '',
+    ]
+    const blob = new Blob([lines.join('\n')], { type: 'text/plain' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `myresilience-advisory-${Date.now()}.txt`
+    a.click()
   }
 
   const renderDashboard = () => (
@@ -288,7 +520,12 @@ function App() {
               </RadarChart>
             </ResponsiveContainer>
           ) : (
-             <div className="panel-loading">Awaiting data...</div>
+             <div className="panel-loading" style={{flexDirection: 'column', alignItems: 'flex-start', padding: '1rem 0'}}>
+               <div className="skeleton skeleton-text title"></div>
+               <div className="skeleton skeleton-text"></div>
+               <div className="skeleton skeleton-text"></div>
+               <div className="skeleton skeleton-text short"></div>
+             </div>
           )}
         </div>
 
@@ -325,10 +562,164 @@ function App() {
           )}
         </div>
 
+        <div className="panel weather-intel-panel">
+          <h3 style={{justifyContent:'space-between', flexWrap:'wrap', gap:'0.5rem'}}>
+            <span style={{display:'flex',alignItems:'center',gap:'0.5rem'}}>🌤️ Weather Intel</span>
+            {weatherSyncTime && <span className="text-muted tech-font" style={{fontSize:'0.7rem',fontWeight:'normal'}}>MET Malaysia · synced {weatherSyncTime}</span>}
+          </h3>
+          {liveWeather ? (
+            <div className="weather-body">
+              <div className="weather-temp-row">
+                <div className="weather-temp-block">
+                  <span className="temp-number tech-font">{liveWeather.current_conditions.temperature_celsius}°</span>
+                  <span className="temp-unit text-muted">C max</span>
+                  {liveWeather.current_conditions.min_temp && (
+                    <span className="temp-min text-muted tech-font">/ {liveWeather.current_conditions.min_temp}° min</span>
+                  )}
+                </div>
+                <div className="weather-location-col">
+                  <span className="weather-location-name">{liveWeather.location}</span>
+                  <span className="weather-summary-en">
+                    {translateWeather(liveWeather.current_conditions.summary).icon}&nbsp;
+                    {translateWeather(liveWeather.current_conditions.summary).en}
+                  </span>
+                  <span className="weather-bm text-muted">BM: {liveWeather.current_conditions.summary}</span>
+                </div>
+              </div>
+
+              {(liveWeather.current_conditions.morning || liveWeather.current_conditions.afternoon || liveWeather.current_conditions.night) && (
+                <div className="forecast-strip">
+                  {[['PAGI', 'morning'], ['PETANG', 'afternoon'], ['MALAM', 'night']].map(([label, key]) =>
+                    liveWeather.current_conditions[key] ? (
+                      <div key={label} className="forecast-segment">
+                        <span className="forecast-label">{label}</span>
+                        <span className="forecast-icon">{translateWeather(liveWeather.current_conditions[key]).icon}</span>
+                        <span className="forecast-desc">{translateWeather(liveWeather.current_conditions[key]).en}</span>
+                        <span className="forecast-bm text-muted">{liveWeather.current_conditions[key]}</span>
+                      </div>
+                    ) : null
+                  )}
+                </div>
+              )}
+
+              <div className="weather-footer">
+                {liveWeather.official_warnings_count > 0
+                  ? <span className="weather-warning-badge">⚠️ {liveWeather.official_warnings_count} official MET warning(s) active</span>
+                  : <span className="weather-clear-badge">✅ No official MET warnings for this region</span>
+                }
+                <a href="https://www.met.gov.my" target="_blank" rel="noopener noreferrer" className="met-link">MET Malaysia ↗</a>
+              </div>
+            </div>
+          ) : (
+            <div className="panel-loading" style={{flexDirection:'column',alignItems:'flex-start',padding:'1rem 0'}}>
+              <div className="skeleton skeleton-text title"></div>
+              <div className="skeleton skeleton-text"></div>
+              <div className="skeleton skeleton-text short"></div>
+            </div>
+          )}
+        </div>
+
+        <div className="panel readiness-panel">
+          <h3><ShieldCheck className="icon-sm text-green" /> Readiness Report</h3>
+          {inventoryAnalysis ? (
+            <div className="readiness-body">
+              <div className="readiness-score-row">
+                <span className={`score-number tech-font ${inventoryAnalysis.readiness_score >= 70 ? 'text-green' : inventoryAnalysis.readiness_score >= 40 ? 'text-yellow' : 'text-red'}`}>
+                  {inventoryAnalysis.readiness_score}
+                </span>
+                <span className="text-muted" style={{fontSize:'0.9rem'}}>/&nbsp;100</span>
+              </div>
+              <p className="text-muted" style={{fontSize:'0.85rem'}}>{inventoryAnalysis.summary}</p>
+              {inventoryAnalysis.critical_gaps.length > 0 && (
+                <div className="gaps-row">
+                  <span style={{fontSize:'0.75rem', fontWeight:'bold', color:'var(--warning)'}}>⚠ GAPS:</span>
+                  {inventoryAnalysis.critical_gaps.map(g => <span key={g} className="gap-tag">{g}</span>)}
+                </div>
+              )}
+              <div className="rec-list">
+                {inventoryAnalysis.recommendations.map((r, i) => (
+                  <div key={i} className="rec-item">
+                    <span className="rec-num tech-font">{i + 1}</span>
+                    <span>{r}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="panel-loading" style={{flexDirection:'column',alignItems:'flex-start',padding:'1rem 0'}}>
+              <div className="skeleton skeleton-text title"></div>
+              <div className="skeleton skeleton-text"></div>
+              <div className="skeleton skeleton-text short"></div>
+            </div>
+          )}
+        </div>
+
+        {/* B2 — Readiness Score Trend */}
+        {scoreHistory.length >= 2 && (
+          <div className="panel score-trend-panel full-width">
+            <h3>📈 Readiness Score Trend</h3>
+            <ResponsiveContainer width="100%" height={120}>
+              <LineChart data={scoreHistory} margin={{ top: 5, right: 20, left: -30, bottom: 0 }}>
+                <XAxis dataKey="t" tick={{ fill: '#8b949e', fontSize: 10 }} />
+                <YAxis domain={[0, 100]} tick={{ fill: '#8b949e', fontSize: 10 }} />
+                <Tooltip
+                  contentStyle={{ background: '#1c2128', border: '1px solid #30363d', borderRadius: '6px', fontSize: '0.8rem' }}
+                  labelStyle={{ color: '#8b949e' }}
+                  itemStyle={{ color: '#84cc16' }}
+                />
+                <Line type="monotone" dataKey="score" stroke="#84cc16" strokeWidth={2} dot={{ r: 3, fill: '#84cc16' }} activeDot={{ r: 5 }} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+
+        {/* B3 — Quick Actions Panel */}
+        <div className="panel quick-actions-panel full-width">
+          <h3>⚡ Quick Actions</h3>
+          <div className="quick-actions-grid">
+            <a href="tel:999" className="quick-action-btn qa-danger">
+              <Phone size={18} />
+              <span>Call 999</span>
+              <small>Emergency</small>
+            </a>
+            <button className="quick-action-btn qa-info" onClick={handleShareLocation}>
+              <Navigation size={18} />
+              <span>Share Location</span>
+              <small>Google Maps</small>
+            </button>
+            <button
+              className={`quick-action-btn ${smsCopied ? 'qa-success' : 'qa-warning'}`}
+              onClick={handleCopySms}
+              disabled={!evacAdvisory?.sms_alert_text}
+            >
+              <Copy size={18} />
+              <span>{smsCopied ? 'Copied!' : 'Copy SMS'}</span>
+              <small>Alert text</small>
+            </button>
+            <button
+              className="quick-action-btn qa-muted"
+              onClick={handleDownloadAdvisory}
+              disabled={!evacAdvisory}
+            >
+              <FileDown size={18} />
+              <span>Download Advisory</span>
+              <small>.txt report</small>
+            </button>
+          </div>
+        </div>
+
         <div className="panel pace-panel full-width">
           <h3><ShieldAlert className="icon-sm" /> Autonomous P.A.C.E. Strategy</h3>
           {!pacePlan ? (
-             <div className="panel-loading">Generating tactical doctrine...</div>
+             <div className="panel-loading" style={{flexDirection: 'column', alignItems: 'flex-start', padding: '1rem 0'}}>
+               <div className="skeleton skeleton-text title"></div>
+               <div className="skeleton skeleton-text"></div>
+               <div className="skeleton skeleton-text short"></div>
+               <div style={{marginTop: '1rem', width: '100%'}}>
+                 <div className="skeleton skeleton-text"></div>
+                 <div className="skeleton skeleton-text short"></div>
+               </div>
+             </div>
           ) : (
             <div className="pace-grid">
               <div className="pace-card p-primary">
@@ -521,6 +912,194 @@ function App() {
     </div>
   )
 
+  // B1 — Shelter detail cards renderer
+  const SHELTER_CONTACTS = {
+    'shelter': { capacity: '~500 persons', contact: '03-7000 0000', authority: 'MBPJ / JKM' },
+    'police':  { capacity: 'N/A', contact: '999 / 03-2266 2222', authority: 'PDRM' },
+    'fire':    { capacity: 'N/A', contact: '994', authority: 'Bomba Malaysia' },
+    'hospital':{ capacity: 'ICU + Emergency', contact: '03-3375 4333', authority: 'KKM' },
+    'nadma':   { capacity: 'N/A', contact: '1800-88-2000', authority: 'NADMA / JKM' },
+  }
+
+  const renderShelterCards = (locations, title, emoji) => (
+    <div className="panel shelter-cards-panel">
+      <h4>{emoji} {title}</h4>
+      <div className="shelter-cards-list">
+        {locations?.map((loc, i) => {
+          const isOpen = expandedShelter === `${title}-${i}`
+          const info = SHELTER_CONTACTS[loc.type] || {}
+          return (
+            <div key={i} className={`shelter-card type-${loc.type}`}>
+              <div className="shelter-card-header" onClick={() => setExpandedShelter(isOpen ? null : `${title}-${i}`)}
+              >
+                <div className="shelter-card-title">
+                  <span className="shelter-type-icon">
+                    {loc.type === 'shelter' ? '🏠' : loc.type === 'police' ? '🚔' : loc.type === 'fire' ? '🚒' : loc.type === 'hospital' ? '🏥' : '🏛️'}
+                  </span>
+                  <div>
+                    <div className="shelter-name">{loc.name}</div>
+                    <div className="shelter-address text-muted">{loc.address}</div>
+                  </div>
+                </div>
+                {isOpen ? <ChevronUp size={16} className="text-muted" /> : <ChevronDown size={16} className="text-muted" />}
+              </div>
+              {isOpen && (
+                <div className="shelter-card-details">
+                  <div className="shelter-detail-row">
+                    <span className="text-muted">Authority</span>
+                    <span>{info.authority || '—'}</span>
+                  </div>
+                  <div className="shelter-detail-row">
+                    <span className="text-muted">Capacity</span>
+                    <span>{info.capacity || '—'}</span>
+                  </div>
+                  <div className="shelter-detail-row">
+                    <span className="text-muted">Contact</span>
+                    <a href={`tel:${info.contact?.split('/')[0]?.trim()}`} className="shelter-call-link">
+                      📞 {info.contact || '—'}
+                    </a>
+                  </div>
+                  <div className="shelter-detail-row">
+                    <span className="text-muted">GPS</span>
+                    <a
+                      href={`https://maps.google.com/?q=${loc.lat},${loc.lng}`}
+                      target="_blank" rel="noopener noreferrer"
+                      className="shelter-call-link"
+                    >
+                      📍 {loc.lat.toFixed(4)}, {loc.lng.toFixed(4)}
+                    </a>
+                  </div>
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+
+  const renderThreatMap = () => (
+    <div className="tab-pane animate-fade-in">
+      <div className="dash-header">
+        <h2>🗺️ Threat Map — Evacuation Advisory</h2>
+        <div style={{display:'flex', gap:'0.75rem', flexWrap:'wrap', alignItems:'center'}}>
+          {/* B4 — Disaster Type Selector */}
+          <div className="disaster-selector">
+            <label className="text-muted" style={{fontSize:'0.8rem', fontWeight:'600'}}>SCENARIO</label>
+            <select
+              value={selectedDisasterType}
+              onChange={e => setSelectedDisasterType(e.target.value)}
+              style={{minWidth:'140px'}}
+            >
+              <option value="auto">🔴 Auto (Live)</option>
+              <option value="flood">🌊 Flood</option>
+              <option value="storm">⛈️ Storm</option>
+              <option value="haze">🌫️ Haze</option>
+              <option value="fire">🔥 Fire</option>
+              <option value="earthquake">🌏 Earthquake</option>
+            </select>
+          </div>
+          <button
+            className="btn-primary"
+            onClick={() => runEvacuationAdvisory(false)}
+            disabled={evacLoading}
+          >
+            {evacLoading ? '⟳ Generating...' : '⚡ Run Advisory'}
+          </button>
+          {evacAdvisory && (
+            <button
+              className="btn-sms"
+              onClick={() => runEvacuationAdvisory(true)}
+              disabled={evacLoading}
+            >
+              📱 Send SMS Alerts
+            </button>
+          )}
+        </div>
+      </div>
+
+      {!evacAdvisory && !evacLoading && (
+        <div className="panel evac-empty-state">
+          <div style={{fontSize:'4rem', marginBottom:'1rem'}}>🗺️</div>
+          <h3>Evacuation Advisor Ready</h3>
+          <p className="text-muted" style={{maxWidth:'480px', margin:'0 auto', lineHeight:'1.6'}}>
+            Click <strong>Run Advisory</strong> to generate a real-time evacuation plan with Klang Valley shelter locations, enforcement agencies, safe routes, avoidance zones, and an SMS-ready alert text.
+          </p>
+        </div>
+      )}
+
+      {evacLoading && (
+        <div className="panel evac-empty-state">
+          <div className="evac-spinner">⟳</div>
+          <h3>Generating Advisory...</h3>
+          <p className="text-muted">Groq Evacuation Advisor is computing shelter locations, enforcement agencies, safe routes, and SMS alert text.</p>
+        </div>
+      )}
+
+      {evacAdvisory && !evacLoading && (
+        <div className="threat-map-layout">
+          <div className="panel threat-map-panel">
+            <div id="leaflet-threat-map" style={{width:'100%', height:'450px', borderRadius:'8px', overflow:'hidden'}}></div>
+            <div className="map-legend">
+              <span>🏠 Shelter</span>
+              <span>🚔 Police</span>
+              <span>🚒 Bomba</span>
+              <span>🏥 Hospital</span>
+              <span>🏛️ NADMA/JKM</span>
+            </div>
+          </div>
+
+          <div className="threat-details-col">
+            <div className="panel sms-preview-panel">
+              <h4>📱 SMS Alert Text</h4>
+              <div className="sms-bubble">{evacAdvisory.sms_alert_text}</div>
+              <span className="text-muted" style={{fontSize:'0.75rem'}}>
+                {evacAdvisory.sms_alert_text?.length}/160 characters
+              </span>
+              {evacAdvisory.sms_results?.length > 0 && (
+                <div className="sms-results-row">
+                  {evacAdvisory.sms_results.map((r, i) => (
+                    <span key={i} className={`sms-status-badge sms-${r.status}`}>
+                      {r.status === 'sent' ? '✅' : r.status === 'skipped' ? '⏭️' : '❌'} {r.phone || 'Contact'}: {r.status}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="panel">
+              <h4>🛣️ Safe Routes</h4>
+              {evacAdvisory.routes_to_take?.map((r, i) => (
+                <div key={i} className="route-item">
+                  <span className="route-num tech-font">{i + 1}</span>
+                  <span style={{fontSize:'0.85rem'}}>{r}</span>
+                </div>
+              ))}
+            </div>
+
+            <div className="panel">
+              <h4>⛔ Areas to Avoid</h4>
+              {evacAdvisory.areas_to_avoid?.map((a, i) => (
+                <div key={i} className="avoid-item">⛔ {a}</div>
+              ))}
+            </div>
+
+            <div className="panel">
+              <h4>🧠 Advisor Reasoning</h4>
+              <p className="text-muted" style={{fontSize:'0.85rem', lineHeight:'1.6'}}>{evacAdvisory.reasoning}</p>
+            </div>
+          </div>
+
+          {/* B1 — Shelter & Agency Detail Cards (full width below map) */}
+          <div className="shelter-cards-row">
+            {renderShelterCards(evacAdvisory.shelter_locations, 'Evacuation Shelters', '🏠')}
+            {renderShelterCards(evacAdvisory.enforcement_agencies, 'Enforcement & Emergency', '🚨')}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+
   return (
     <div className="app-container">
       <aside className={`sidebar ${isSidebarOpen ? 'open' : 'closed'}`}>
@@ -542,7 +1121,13 @@ function App() {
           <button className={activeTab === 'activity' ? 'active' : ''} onClick={() => setActiveTab('activity')}>
             <Activity className="nav-icon" /> {isSidebarOpen && 'Activity Network'}
           </button>
+          <button className={activeTab === 'threatmap' ? 'active' : ''} onClick={() => setActiveTab('threatmap')}>
+            <Map className="nav-icon" /> {isSidebarOpen && 'Threat Map'}
+          </button>
         </nav>
+        <button className="sidebar-toggle-btn" onClick={() => setSidebarOpen(!isSidebarOpen)} title={isSidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}>
+          {isSidebarOpen ? <ChevronLeft className="nav-icon" /> : <Menu className="nav-icon" />}
+        </button>
       </aside>
 
       <main className="main-content">
@@ -550,6 +1135,7 @@ function App() {
         {activeTab === 'inventory' && renderInventory()}
         {activeTab === 'team' && renderTeam()}
         {activeTab === 'activity' && renderActivity()}
+        {activeTab === 'threatmap' && renderThreatMap()}
       </main>
     </div>
   )

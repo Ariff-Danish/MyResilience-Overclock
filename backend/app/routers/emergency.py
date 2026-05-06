@@ -11,7 +11,9 @@ from app.agents.safesync_agents import (
     run_coordinator_agent,
     run_inventory_analysis_agent,
     run_pace_agent,
+    run_evacuation_advisor_agent,
 )
+from app.agents.sms_tools import send_bulk_sms
 
 router = APIRouter()
 
@@ -46,6 +48,14 @@ class RiskEvaluationRequest(BaseModel):
 class InventoryAnalysisRequest(BaseModel):
     inventory: List[InventoryItem]
     team: List[TeamMember]
+
+
+class EvacuationAdvisoryRequest(BaseModel):
+    disaster_type: str = "flood"
+    severity: str = "warning"
+    location: str = "Petaling Jaya, Malaysia"
+    team: List[TeamMember] = []
+    send_sms_alerts: bool = False
 
 
 async def fetch_met_weather() -> dict:
@@ -99,9 +109,14 @@ async def fetch_met_weather() -> dict:
             "location": f"{loc_name}, Malaysia",
             "current_conditions": {
                 "temperature_celsius": today_forecast.get('max_temp', 32) if today_forecast else 32,
-                "summary": summary
+                "min_temp": today_forecast.get('min_temp', 25) if today_forecast else 25,
+                "summary": summary,
+                "morning": today_forecast.get('morning_forecast', '') if today_forecast else '',
+                "afternoon": today_forecast.get('afternoon_forecast', '') if today_forecast else '',
+                "night": today_forecast.get('night_forecast', '') if today_forecast else '',
             },
-            "alerts": alerts
+            "alerts": alerts,
+            "official_warnings_count": sum(1 for a in alerts if 'OFFICIAL WARNING' in a.get('type', ''))
         }
     except Exception as e:
         print(f"MET API Error: {e}")
@@ -109,8 +124,16 @@ async def fetch_met_weather() -> dict:
 
     return {
         "location": "Petaling, Malaysia",
-        "current_conditions": {"temperature_celsius": 32, "summary": "Tiada hujan"},
-        "alerts": []
+        "current_conditions": {
+            "temperature_celsius": 32,
+            "min_temp": 25,
+            "summary": "Tiada hujan",
+            "morning": "",
+            "afternoon": "",
+            "night": ""
+        },
+        "alerts": [],
+        "official_warnings_count": 0
     }
 
 async def fetch_mock_weather_data(demo: bool = False) -> str:
@@ -171,6 +194,35 @@ async def evaluate_risk(req: RiskEvaluationRequest, demo: bool = False):
         survival = await run_assessor_agent(weather, inv, team)
         coordinator = await run_coordinator_agent(weather=weather, survival=survival, team=team, location=req.location)
 
+        # ─── AUTONOMOUS DISPATCH ──────────────────────────────────────────
+        # If urgency is immediate or prepare: auto-run Evacuation Advisor
+        # and dispatch SMS to ALL team phone numbers without user intervention.
+        evac_data = None
+        sms_auto_results = []
+        if survival.evacuation_urgency in ["immediate", "prepare"]:
+            try:
+                evac_result = await run_evacuation_advisor_agent(
+                    disaster_type=weather.disaster_type,
+                    severity=weather.severity,
+                    location=req.location,
+                    team=team
+                )
+                evac_data = evac_result.model_dump()
+
+                # Send SMS to every phone number in the team roster
+                phone_numbers = [
+                    m.get("phone", "").strip() for m in team
+                    if m.get("phone", "").strip()
+                ]
+                if phone_numbers:
+                    sms_auto_results = send_bulk_sms(phone_numbers, evac_result.sms_alert_text)
+                    print(f"[AUTO-SMS] Dispatched to {len(phone_numbers)} number(s) — urgency: {survival.evacuation_urgency}")
+                else:
+                    sms_auto_results = [{"status": "skipped", "reason": "No phone numbers registered in team roster"}]
+            except Exception as evac_err:
+                print(f"[AUTO-EVAC] Advisory failed (non-critical): {evac_err}")
+        # ─────────────────────────────────────────────────────────────────
+
         return {
             "weather_severity": weather.severity,
             "weather_disaster_type": weather.disaster_type,
@@ -182,6 +234,41 @@ async def evaluate_risk(req: RiskEvaluationRequest, demo: bool = False):
             "action_taken": coordinator.action_taken,
             "message_drafted": coordinator.message_drafted,
             "contacts_notified": coordinator.contacts_notified,
+            "evacuation_advisory": evac_data,        # None if urgency < prepare
+            "sms_auto_results": sms_auto_results,    # Per-number dispatch log
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/evacuation_advisory")
+async def evacuation_advisory(req: EvacuationAdvisoryRequest):
+    """Run Groq Evacuation Advisor — returns shelters, agencies, routes, avoidance zones, and SMS text.
+    Optionally dispatches SMS via Twilio to team phone numbers.
+    """
+    try:
+        team_data = [t.model_dump() for t in req.team]
+        result = await run_evacuation_advisor_agent(
+            disaster_type=req.disaster_type,
+            severity=req.severity,
+            location=req.location,
+            team=team_data
+        )
+
+        sms_results = []
+        if req.send_sms_alerts:
+            phone_numbers = [
+                m.phone for m in req.team
+                if m.phone and m.phone.strip()
+            ]
+            if phone_numbers:
+                sms_results = send_bulk_sms(phone_numbers, result.sms_alert_text)
+            else:
+                sms_results = [{"status": "skipped", "reason": "No phone numbers found in team roster"}]
+
+        return {
+            **result.model_dump(),
+            "sms_results": sms_results
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

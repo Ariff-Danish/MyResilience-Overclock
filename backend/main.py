@@ -4,13 +4,14 @@ from app.routers import emergency
 import os
 
 app = FastAPI(
-    title="SafeSync AI",
-    description="Agentic Emergency Preparedness System API",
+    title="MyResilience",
+    description="Agentic Disaster Preparedness Guardian — Malaysia's AI-native household emergency command system.",
     version="2.0.0",
 )
 
-# CORS setup
-ALLOWED_ORIGINS = ["http://localhost:5173", "http://localhost:3000"]
+# CORS setup — reads from .env ALLOWED_ORIGINS, falls back to local dev defaults
+_origins_env = os.environ.get("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000")
+ALLOWED_ORIGINS = [o.strip() for o in _origins_env.split(",") if o.strip()]
 
 app.add_middleware(
     CORSMiddleware,

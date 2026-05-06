@@ -417,6 +417,20 @@ async def run_coordinator_agent(
                             send_email(to=email, subject=coordinator.subject_drafted, body=coordinator.message_drafted)
                         except Exception:
                             pass
+
+                # SMS dispatch to emergency contacts with phone numbers
+                try:
+                    from app.agents.sms_tools import send_bulk_sms
+                    phone_numbers = [
+                        m.get("phone", "").strip() for m in team
+                        if m.get("role") == "emergency_contact" and m.get("phone", "").strip()
+                    ]
+                    if phone_numbers:
+                        sms_body = f"🚨 MYRESILIENCE EMERGENCY: {coordinator.subject_drafted[:80]}. Evacuate now. Call 999 immediately."
+                        send_bulk_sms(phone_numbers, sms_body[:160])
+                        print(f"[Coordinator] SMS dispatched to {len(phone_numbers)} contact(s).")
+                except Exception as sms_err:
+                    print(f"[Coordinator] SMS dispatch failed (non-critical): {sms_err}")
             
             if NOTIFICATION_EMAIL:
                 try:
@@ -470,3 +484,124 @@ async def run_pace_agent(inventory: list, team: list, location: str = "Malaysia"
             emergency="Last resort: Signal for help and move to the nearest evacuation centre.",
             reasoning="P.A.C.E. agent encountered an error. Default survival guidance provided."
         )
+
+
+# ══════════════════════════════════════════════════════════════
+# EVACUATION ADVISOR AGENT
+# ══════════════════════════════════════════════════════════════
+
+class ShelterLocation(BaseModel):
+    name: str
+    address: str
+    lat: float
+    lng: float
+    type: str  # shelter | police | fire | hospital | nadma
+
+
+class EvacuationAdvisoryResult(BaseModel):
+    shelter_locations: List[ShelterLocation]
+    enforcement_agencies: List[ShelterLocation]
+    areas_to_avoid: List[str]
+    routes_to_take: List[str]
+    sms_alert_text: str
+    reasoning: str
+
+
+EVACUATION_ADVISOR_PROMPT = """ROLE: You are the Malaysian Evacuation Advisor integrated with NADMA (National Disaster Management Agency Malaysia), PDRM, Bomba, and JKM databases. When a threat is detected, you generate a precise, actionable evacuation advisory with real Malaysian locations.
+
+TASK: Given the disaster_type, location, severity, and team data, produce a full evacuation plan including local enforcement agencies.
+
+SECTION 1 — shelter_locations (exactly 3):
+List real Malaysian government-designated evacuation centres near Petaling Jaya / Klang Valley:
+- Dewan Olahraga Majlis Bandaraya Petaling Jaya: lat 3.1073, lng 101.6297, type "shelter"
+- Sekolah Kebangsaan Seksyen 10 PJ: lat 3.1020, lng 101.6310, type "shelter"
+- Dewan Komuniti Seksyen 14 PJ: lat 3.1073, lng 101.6067, type "shelter"
+- Pusat Komuniti Klang: lat 3.0444, lng 101.4448, type "shelter"
+- Sekolah Menengah Kebangsaan Damansara Jaya: lat 3.1318, lng 101.6157, type "shelter"
+
+SECTION 2 — enforcement_agencies (exactly 5):
+List real local enforcement and emergency service offices:
+- IPD Petaling Jaya (PDRM): lat 3.1103, lng 101.6378, type "police", address "Jalan Othman, Petaling Jaya"
+- Balai Polis Damansara: lat 3.1522, lng 101.6216, type "police", address "Persiaran Damansara, PJ"
+- Balai Bomba dan Penyelamat PJ: lat 3.1013, lng 101.6343, type "fire", address "Jalan Kemajuan, Petaling Jaya"
+- Hospital Tengku Ampuan Rahimah Klang: lat 3.0444, lng 101.4510, type "hospital", address "Jalan Langat, Klang"
+- Pejabat JKM Petaling: lat 3.1073, lng 101.6067, type "nadma", address "Kompleks Pentadbiran PJ"
+
+SECTION 3 — areas_to_avoid (exactly 5 specific roads/areas):
+Focus on historically flood-prone areas in Klang Valley. Use real road names.
+
+SECTION 4 — routes_to_take (exactly 3 routes):
+Use actual Malaysian highway/road names (Federal Highway, NKVE, LDP, Kesas, DUKE, MRR2).
+Format: "Route name: specific directions using named roads"
+
+SECTION 5 — sms_alert_text (max 160 characters):
+Format: "🚨 MYRESILIENCE: [threat]. Evacuate via [road]. Nearest shelter: [name]. Call 999. Avoid [area]."
+
+OUTPUT (STRICT JSON — no markdown):
+{
+  "shelter_locations": [
+    {"name": "<string>", "address": "<string>", "lat": <float>, "lng": <float>, "type": "shelter"}
+  ],
+  "enforcement_agencies": [
+    {"name": "<string>", "address": "<string>", "lat": <float>, "lng": <float>, "type": "<police|fire|hospital|nadma>"}
+  ],
+  "areas_to_avoid": ["<string>"],
+  "routes_to_take": ["<string>"],
+  "sms_alert_text": "<string max 160 chars>",
+  "reasoning": "<2-3 sentences>"
+}
+
+RULES:
+- Exactly 3 shelter_locations, exactly 5 enforcement_agencies, exactly 5 areas_to_avoid, exactly 3 routes_to_take.
+- sms_alert_text MUST be ≤160 characters. Count carefully.
+- Use only real Malaysian place names. No invented locations.
+- Do NOT fabricate GPS — use the reference coordinates above or reasonable approximations within Klang Valley (lat 2.8–3.3, lng 101.3–101.8).
+- No markdown, no code fences."""
+
+
+async def run_evacuation_advisor_agent(
+    disaster_type: str,
+    severity: str,
+    location: str,
+    team: list
+) -> EvacuationAdvisoryResult:
+    try:
+        user = (
+            f"disaster_type: {disaster_type}\n"
+            f"severity: {severity}\n"
+            f"location: {location}\n"
+            f"team_size: {len(team)}\n"
+            f"team: {json.dumps(team)}"
+        )
+        result = await _call_groq(EVACUATION_ADVISOR_PROMPT, user, max_tokens=2000)
+        shelters = [ShelterLocation(**s) for s in result.get("shelter_locations", [])]
+        agencies = [ShelterLocation(**a) for a in result.get("enforcement_agencies", [])]
+        return EvacuationAdvisoryResult(
+            shelter_locations=shelters,
+            enforcement_agencies=agencies,
+            areas_to_avoid=result.get("areas_to_avoid", []),
+            routes_to_take=result.get("routes_to_take", []),
+            sms_alert_text=result.get("sms_alert_text", "🚨 MYRESILIENCE: Threat detected. Call 999. Move to nearest evacuation centre immediately."),
+            reasoning=result.get("reasoning", "")
+        )
+    except Exception as e:
+        print(f"[Evacuation Advisor] Agent failed: {e}")
+        return EvacuationAdvisoryResult(
+            shelter_locations=[
+                ShelterLocation(name="Dewan Olahraga MBPJ", address="Jalan Belia, PJ", lat=3.1073, lng=101.6297, type="shelter"),
+                ShelterLocation(name="SK Seksyen 10 PJ", address="Seksyen 10, PJ", lat=3.1020, lng=101.6310, type="shelter"),
+                ShelterLocation(name="Dewan Komuniti Seksyen 14", address="Seksyen 14, PJ", lat=3.1073, lng=101.6067, type="shelter"),
+            ],
+            enforcement_agencies=[
+                ShelterLocation(name="IPD Petaling Jaya (PDRM)", address="Jalan Othman, PJ", lat=3.1103, lng=101.6378, type="police"),
+                ShelterLocation(name="Balai Bomba PJ", address="Jalan Kemajuan, PJ", lat=3.1013, lng=101.6343, type="fire"),
+                ShelterLocation(name="Hospital Tengku Ampuan Rahimah", address="Jalan Langat, Klang", lat=3.0444, lng=101.4510, type="hospital"),
+                ShelterLocation(name="Balai Polis Damansara", address="Persiaran Damansara, PJ", lat=3.1522, lng=101.6216, type="police"),
+                ShelterLocation(name="Pejabat JKM Petaling", address="Kompleks Pentadbiran PJ", lat=3.1073, lng=101.6067, type="nadma"),
+            ],
+            areas_to_avoid=["Jalan Klang Lama (flood-prone low-lying sections)", "Kawasan Sungai Penchala", "Kesas Highway underpass sections", "Jalan Templer near river", "Shah Alam Section 25 low areas"],
+            routes_to_take=["Route 1: NKVE northbound → exit Damansara → DUKE highway to high ground", "Route 2: Federal Highway → Kesas eastbound → LDP interchange (avoid low underpasses)", "Route 3: Jalan Ipoh → MRR2 → shelter at Kepong"],
+            sms_alert_text="🚨 MYRESILIENCE: Flood threat. Evacuate via NKVE/DUKE. Shelter: Dewan Olahraga MBPJ. Avoid Jln Klang Lama. Call 999.",
+            reasoning="Default evacuation plan applied due to agent error. Petaling Jaya standard flood protocol used."
+        )
+
