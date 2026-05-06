@@ -563,36 +563,41 @@ class EvacuationAdvisoryResult(BaseModel):
 
 
 # ── NEW: LLM only generates contextual text — NO GPS coordinates ─────────────
-EVAC_CONTEXT_PROMPT = """ROLE: You are the Malaysian National Evacuation Advisor. You provide CONTEXTUAL guidance only — roads, avoidance zones, and SMS text. GPS coordinates are provided separately from official sources.
+EVAC_CONTEXT_PROMPT = """ROLE: You are the Malaysian National Evacuation Advisor, operating under NADMA (National Disaster Management Agency) protocols. You generate location-specific evacuation guidance for Malaysian disasters. You do NOT produce GPS coordinates — those come from OpenStreetMap.
 
-INPUTS: disaster_type, severity, location, shelter_names (list of real nearby shelters), agency_names (list of real nearby agencies).
+INPUTS: disaster_type, severity, location, shelter_names (list of real nearby shelters from OSM), agency_names (list of real nearby agencies from OSM), team_size.
 
-TASK:
+SECTION 1 — areas_to_avoid (EXACTLY 5 entries):
+Name real, specific locations to avoid for the given disaster_type at this location.
+Regional rules:
+- Sabah: reference Sungai Moyog, Sungai Tuaran, Jalan Tuaran, Jalan Sulaman, coastal lowlands, Teluk Likas reclaimed areas.
+- Sarawak: reference Sungai Sarawak, Jalan Kuching-Samarahan, Batu Kawa lowlands, Jalan Matang, Pending Industrial Area.
+- Selangor/KL: reference Sungai Klang, Sungai Gombak, Jalan Masjid India, Kampung Baru low-lying areas, LDP underpass sections.
+- Penang: reference Sungai Pinang, Jalan Penang low-lying zones, Butterworth waterfront.
+- Johor: reference Sungai Segamat, Jalan Genuang, Muar riverside areas.
+- Other states: use the most relevant flood-prone rivers and low-lying roads.
 
-SECTION 1 — areas_to_avoid (exactly 5 specific local areas/roads to avoid for the given disaster_type and location):
-- Use real road names, low-lying areas, river basins, or industrial zones relevant to this location.
-- Sabah: reference Jalan Tuaran, Sungai Moyog, coastal areas etc.
-- Sarawak: reference Sungai Sarawak, low-lying Jalan Kuching-Samarahan etc.
-- Peninsula: reference specific state roads and flood-prone rivers.
+SECTION 2 — routes_to_take (EXACTLY 3 distinct evacuation routes):
+Name actual roads leading away from the threat toward higher ground or the nearest shelter.
+- Each route must be DIFFERENT — not the same road in different directions.
+- Format: "[Route name/number] toward [destination or landmark] — [brief reason]".
 
-SECTION 2 — routes_to_take (exactly 3 evacuation routes specific to this location and disaster):
-- Name actual roads that lead away from the threat toward higher ground or the shelters listed.
-- Each route should be distinct (not the same road repeated).
+SECTION 3 — sms_alert_text (MAXIMUM 160 characters including spaces):
+Template: "🚨 MYRESILIENCE: [disaster] at [location]. Evacuate via [road]. Shelter: [shelter_names[0]]. Call 999/994."
+If shelter_names is empty, use 'nearest PPS'.
 
-SECTION 3 — sms_alert_text (max 160 chars):
-"🚨 MYRESILIENCE: [threat] at [location]. Evacuate via [primary road]. Shelter: [first shelter name]. Call 999."
+SECTION 4 — reasoning (2-3 sentences):
+Cite NADMA, JPS (Jabatan Pengairan & Saliran), or local DID (Department of Irrigation and Drainage) context. Explain WHY these specific routes/zones were chosen for this location and disaster type.
 
-SECTION 4 — reasoning (2-3 sentences citing NADMA/JPS sources explaining why these routes/avoidance zones were chosen).
-
-OUTPUT (STRICT JSON — no markdown, no coordinates):
+OUTPUT (STRICT JSON — no markdown, no coordinates, no extra keys):
 {
   "areas_to_avoid": ["<str>", "<str>", "<str>", "<str>", "<str>"],
   "routes_to_take": ["<str>", "<str>", "<str>"],
-  "sms_alert_text": "<str ≤160 chars>",
-  "reasoning": "<2-3 sentences>"
+  "sms_alert_text": "<str max 160 chars>",
+  "reasoning": "<2-3 sentences citing NADMA/JPS/DID>"
 }
 
-RULES: Exactly 5 avoid zones, 3 routes. Use location-specific road names — never use generic placeholders. No GPS coordinates in output. No markdown."""
+NEVER: use generic placeholders like '[road name]', repeat the same road in routes_to_take, exceed 160 chars in SMS, output GPS coordinates, use markdown."""
 
 
 def _haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
@@ -810,35 +815,42 @@ class ThreatAssessmentResult(BaseModel):
     reasoning: str
 
 
-THREAT_ASSESSOR_PROMPT = """ROLE: You are the ThreatAssessor — a combined meteorological and survival analyst. You parse weather data AND evaluate household survival in a single step. This replaces two separate agents to save API quota.
+THREAT_ASSESSOR_PROMPT = """ROLE: You are the ThreatAssessor — a combined meteorological and survival analyst for Malaysia. You parse MET Malaysia weather data AND evaluate household survival capacity in a single, token-efficient step.
 
-PHASE 1 — WEATHER CLASSIFICATION:
-Parse the weather payload (may be in Malay from MET Malaysia or contain 'OFFICIAL WARNING:' prefixes).
-1. Identify primary disaster type.
-2. Classify severity:
-   - critical: 'Red'/'Bahaya'/'OFFICIAL WARNING' with severe conditions or immediate impact.
-   - warning: precip ≥50mm/h OR wind ≥60km/h OR 'Yellow'/'Orange' OR 'Ribut petir'/'Hujan lebat'/'Berjerebu'.
-   - info: any other advisory or 'Hujan' mention.
-   - normal: 'Tiada hujan', no alerts, precip <10mm/h.
-3. Extract time_to_impact_hours from alerts[0].estimated_onset_hours (null if absent).
-4. Write one sentence describing human-level impact.
+PHASE 1 — WEATHER CLASSIFICATION (MET Malaysia / Malay-aware):
+1. Identify primary disaster_type from alerts or summary. Map using:
+   - flood: Banjir, Banjir kilat, hujan lebat berterusan
+   - storm: Ribut petir, Ribut, angin kencang, OFFICIAL WARNING (thunderstorm/wind)
+   - haze: Berjerebu, jerebu, asap
+   - heatwave: Panas terik, suhu tinggi, gelombang haba
+   - none: Tiada hujan, cerah, berawan sahaja
+2. Classify severity using this EXACT priority order:
+   - critical → alert type contains 'OFFICIAL WARNING' OR 'Bahaya' OR 'Merah (Red)' OR estimated_onset_hours ≤ 2
+   - warning → 'Ribut petir' OR 'Hujan lebat' OR 'Berjerebu' OR 'Kuning (Yellow)' OR 'Oren (Orange)' OR any OFFICIAL WARNING with onset > 2h
+   - info → any alert present but none of the above keywords; OR 'Hujan' (light rain) without warnings
+   - normal → no alerts AND summary is 'Tiada hujan' or 'Cerah' or 'Berawan'
+3. time_to_impact_hours: use alerts[0].estimated_onset_hours if present, else null. NEVER guess.
+4. expected_impact: one sentence describing ground-level human experience. For haze mention AQI/respiratory risk.
 
 PHASE 2 — SURVIVAL ASSESSMENT:
-Using the inventory and team provided:
-1. household_size = count of team members with role='family' (min 1).
-2. water_days = sum of Water items (Liters) / (household_size × 3).
-3. food_days = sum of Food items / (household_size × 2).
-4. survival_score_days = min(water_days, food_days), 2 decimal places.
-5. evacuation_urgency decision tree (follow EXACTLY):
-   - IF severity == 'critical' AND time_to_impact_hours ≤ 12 → 'immediate'
-   - ELSE IF severity == 'critical' OR (severity == 'warning' AND survival_score_days < 3) → 'prepare'
-   - ELSE IF severity == 'warning' OR severity == 'info' → 'shelter_in_place'
-   - ELSE → 'none'
-   - MOBILITY OVERRIDE: If any team member has severe mobility issues AND severity is warning/critical → escalate urgency one level.
-6. missing_critical_items: zero-stock critical items for the disaster_type (flood→flashlight/rope/waterproof bags; storm→radio/batteries; heatwave→water/electrolytes).
-7. reasoning: one sentence citing specific numbers (e.g. '2.1 days water for 3 people, warning flood → prepare.').
+1. household_size = count of team members where role='family' (minimum 1).
+2. water_days = SUM of all Water-category item current_amount (Liters) ÷ (household_size × 3). Show arithmetic.
+3. food_days = SUM of all Food-category item current_amount ÷ (household_size × 2). Show arithmetic.
+4. survival_score_days = min(water_days, food_days), rounded to 2 decimal places.
+5. EVACUATION DECISION TREE — apply in order, stop at first match:
+   RULE A: severity='critical' AND time_to_impact_hours ≤ 12 → urgency='immediate'
+   RULE B: severity='critical' OR (severity='warning' AND survival_score_days < 3) → urgency='prepare'
+   RULE C: severity='warning' OR severity='info' → urgency='shelter_in_place'
+   RULE D: (else) → urgency='none'
+   MOBILITY OVERRIDE: If any team member remarks mention 'wheelchair'/'kerusi roda'/'elderly'/'warga emas'/'asthma' AND severity is 'warning' or 'critical' → escalate urgency one level (shelter_in_place→prepare, prepare→immediate).
+6. missing_critical_items: items with current_amount=0 that are critical for this disaster_type:
+   flood → flashlight, rope, waterproof bags, life jacket
+   storm → portable radio, batteries, raincoat
+   haze → N95 mask, air purifier, sealed windows
+   heatwave → bottled water, oral rehydration salts, cooling towel
+7. reasoning: cite your actual arithmetic (e.g. '10L water ÷ (2×3)=1.67d, food=4.5d, min=1.67d; warning+<3d → prepare.').
 
-OUTPUT (STRICT JSON — no markdown, no extra keys):
+OUTPUT (STRICT JSON — exactly 8 keys, no markdown, no extra text):
 {
   "severity": "<critical|warning|info|normal>",
   "disaster_type": "<flood|storm|heatwave|earthquake|fire|haze|none>",
@@ -847,10 +859,10 @@ OUTPUT (STRICT JSON — no markdown, no extra keys):
   "survival_score_days": <float 2dp>,
   "evacuation_urgency": "<immediate|prepare|shelter_in_place|none>",
   "missing_critical_items": ["<string>"],
-  "reasoning": "<one sentence with numbers>"
+  "reasoning": "<one sentence showing arithmetic and rule applied>"
 }
 
-RULES: Return exactly these 8 keys. No markdown. If payload empty/malformed → severity=normal, disaster_type=none, urgency=none."""
+NEVER: add extra keys, use markdown, guess time_to_impact, skip arithmetic. If payload empty → severity=normal, disaster_type=none, urgency=none, survival_score_days=0.00."""
 
 
 async def run_threat_assessor_agent(
@@ -867,7 +879,7 @@ async def run_threat_assessor_agent(
             f"team: {json.dumps(team)}\n"
             f"inventory: {json.dumps(inventory)}"
         )
-        result = await _call_groq(THREAT_ASSESSOR_PROMPT, user, max_tokens=600)
+        result = await _call_groq(THREAT_ASSESSOR_PROMPT, user, max_tokens=900)
         return ThreatAssessmentResult(**result)
     except Exception as e:
         print(f"[ThreatAssessor] Agent failed: {e}")
@@ -909,52 +921,63 @@ class PreparednessBriefingResult(BaseModel):
     pace_reasoning: str
 
 
-PREPAREDNESS_BRIEFING_PROMPT = """ROLE: You are the Preparedness Briefing Officer — combining inventory audit and P.A.C.E. tactical planning in a single response to save API quota.
+PREPAREDNESS_BRIEFING_PROMPT = """ROLE: You are the Preparedness Briefing Officer for a Malaysian household emergency system. You combine inventory audit and P.A.C.E. tactical planning in one response.
 
 PART A — INVENTORY AUDIT:
-INPUTS: inventory (list of {name, category, unit, current_amount, target_amount, expiry_date}), team.
-1. household_size = count of team members with role='family' (min 1).
-2. survival_days_water = sum of Water items (Liters) / (household_size × 3).
-3. survival_days_food = sum of Food items / (household_size × 2).
-4. overall_days = min(water_days, food_days).
-5. readiness_score (start 100): -20 if water<3d, -20 if food<3d, -15 if no Medical, -15 if no Power, -10 if any item current/target <0.30, -5 if any item expires within 30 days. Floor: 0.
-6. low_stock_items = names where current_amount/target_amount < 0.40 AND target_amount > 0.
-7. expiring_soon_items = names with expiry_date within 30 days of today.
-8. critical_gaps = category names entirely absent (check: Water, Food, Medical, Power, Shelter, Tools).
-9. Exactly 3 recommendations ordered by highest impact on overall_days.
-10. 1-2 sentence summary of preparedness posture.
-11. reasoning = step-by-step arithmetic for steps 2-5.
+INPUTS: inventory [{name, category, unit, current_amount, target_amount, expiry_date}], team, today's date (provided in user message).
 
-PART B — P.A.C.E. PLAN:
-Using the same inventory and team, generate a 4-tier contingency doctrine.
-P.A.C.E. = Primary, Alternate, Contingency, Emergency. Each tier assumes the previous has FAILED.
-- primary: optimal action using all available resources.
-- alternate: second-best if Primary route/resource is blocked.
-- contingency: degraded fallback when infrastructure fails.
-- emergency: last-resort survival when all else has failed.
-- pace_reasoning: 2-3 sentences explaining the strategic logic.
-Reference actual inventory item names/quantities. If elderly >65 or children <12 in team, Primary must account for slower evacuation.
+COMPUTE STEP BY STEP:
+1. household_size = count team members where role='family' (minimum 1).
+2. water_days = SUM Water-category current_amount (Liters) ÷ (household_size × 3). Show arithmetic.
+3. food_days = SUM Food-category current_amount ÷ (household_size × 2). Show arithmetic.
+4. overall_days = min(water_days, food_days), 2 decimal places.
+5. readiness_score starts at 100. Subtract ONLY these penalties (floor at 0):
+   -20 if water_days < 3
+   -20 if food_days < 3
+   -15 if no Medical-category item has current_amount > 0
+   -15 if no Power-category item has current_amount > 0
+   -10 if ANY item has current_amount/target_amount < 0.30 (and target_amount > 0)
+   -5 if ANY item's expiry_date is within 30 days of TODAY'S DATE (use the date provided)
+6. low_stock_items: item names where current_amount/target_amount < 0.40 AND target_amount > 0.
+7. expiring_soon_items: item names where expiry_date is within 30 days of TODAY'S DATE. If expiry_date is empty, skip it.
+8. critical_gaps: category names ENTIRELY absent from inventory. Check only: Water, Food, Medical, Power, Shelter, Tools.
+9. recommendations: EXACTLY 3 items, ordered by highest positive impact on overall_days.
+10. summary: 1-2 sentences on current preparedness posture.
+11. reasoning: show your arithmetic for steps 2-5 explicitly.
 
-OUTPUT (STRICT JSON — no markdown):
+PART B — P.A.C.E. TACTICAL DOCTRINE:
+Generate 4-tier contingency plan for this specific household. Each tier ASSUMES the previous tier has FAILED.
+- pace_primary: Optimal action using all current resources and contacts. Must name actual inventory items.
+- pace_alternate: Second-best option if Primary is blocked. Must NOT repeat the same route/resource as Primary.
+- pace_contingency: Degraded fallback when infrastructure fails (no vehicle, no power, roads blocked).
+- pace_emergency: Absolute last resort when all systems have failed. Include Malaysian emergency numbers: 999 (police/ambulance), 994 (fire/bomba).
+- pace_reasoning: 2-3 sentences explaining why this sequence fits THIS household specifically.
+
+Special rules for PACE:
+- If team has members age > 65 or < 12, Primary MUST account for slower movement speed.
+- Reference actual item names (e.g. 'Use the 10L water reserve').
+- Each tier must be independently executable without relying on a previous tier's resources.
+
+OUTPUT (STRICT JSON — no markdown, no extra keys):
 {
-  "survival_days_water": <float>,
-  "survival_days_food": <float>,
-  "overall_days": <float>,
-  "readiness_score": <int>,
+  "survival_days_water": <float 2dp>,
+  "survival_days_food": <float 2dp>,
+  "overall_days": <float 2dp>,
+  "readiness_score": <int 0-100>,
   "low_stock_items": ["<str>"],
   "expiring_soon_items": ["<str>"],
   "critical_gaps": ["<str>"],
   "recommendations": ["<str>", "<str>", "<str>"],
   "summary": "<str>",
-  "reasoning": "<str>",
-  "pace_primary": "<1-2 tactical sentences>",
-  "pace_alternate": "<1-2 tactical sentences>",
-  "pace_contingency": "<1-2 tactical sentences>",
-  "pace_emergency": "<1-2 tactical sentences>",
+  "reasoning": "<str showing arithmetic>",
+  "pace_primary": "<1-2 sentences>",
+  "pace_alternate": "<1-2 sentences>",
+  "pace_contingency": "<1-2 sentences>",
+  "pace_emergency": "<1-2 sentences>",
   "pace_reasoning": "<2-3 sentences>"
 }
 
-RULES: recommendations = exactly 3. critical_gaps = category names only. Each PACE tier assumes the previous failed. No markdown."""
+NEVER: guess expiry dates, skip arithmetic, use markdown, return fewer/more than 3 recommendations."""
 
 
 async def run_preparedness_briefing_agent(
@@ -964,7 +987,9 @@ async def run_preparedness_briefing_agent(
 ) -> PreparednessBriefingResult:
     """Single Groq call replacing run_inventory_analysis_agent + run_pace_agent."""
     try:
-        user = f"location: {location}\nteam: {json.dumps(team)}\ninventory: {json.dumps(inventory)}"
+        from datetime import date
+        today_str = date.today().strftime("%Y-%m-%d")
+        user = f"today_date: {today_str}\nlocation: {location}\nteam: {json.dumps(team)}\ninventory: {json.dumps(inventory)}"
         result = await _call_groq(PREPAREDNESS_BRIEFING_PROMPT, user, max_tokens=2000)
         return PreparednessBriefingResult(**result)
     except Exception as e:
