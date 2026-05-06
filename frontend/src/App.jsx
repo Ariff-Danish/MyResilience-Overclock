@@ -20,6 +20,7 @@ function App() {
   // Inventory UI
   const [showAddForm, setShowAddForm] = useState(false)
   const [filterMode, setFilterMode] = useState('all') // all | low_stock | expiring
+  const [showAddMember, setShowAddMember] = useState(false)
 
   // Core State
   const DEFAULT_INVENTORY = [
@@ -543,11 +544,15 @@ function App() {
     setEditItemData(null)
   }
 
-  const [newMember, setNewMember] = useState({ name: '', age: 0, role: 'family', email: '', phone: '', remarks: '' })
+  const [newMember, setNewMember] = useState({ name: '', age: 0, role: 'family', email: '', phone: '', remarks: '', skills: '', pinned: false })
   const addTeamMember = () => {
     if (!newMember.name) return
     setTeam([...team, { ...newMember, id: Date.now().toString() }])
-    setNewMember({ name: '', age: 0, role: 'family', email: '', phone: '', remarks: '' })
+    setNewMember({ name: '', age: 0, role: 'family', email: '', phone: '', remarks: '', skills: '', pinned: false })
+  }
+
+  const togglePin = (id) => {
+    setTeam(team.map(m => m.id === id ? { ...m, pinned: !m.pinned } : m))
   }
 
   const [editingMemberId, setEditingMemberId] = useState(null)
@@ -1144,28 +1149,49 @@ function App() {
     )
   }
 
-  const renderTeam = () => (
-    <div className="tab-pane animate-fade-in">
-      <h2>Personnel & Comms</h2>
+  const renderTeam = () => {
+    // Sort: pinned first, then emergency_contact, then family, then useful_contact
+    const roleOrder = { emergency_contact: 0, family: 1, useful_contact: 2 }
+    const sorted = [...team].sort((a, b) => {
+      if ((b.pinned ? 1 : 0) !== (a.pinned ? 1 : 0)) return (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0)
+      return (roleOrder[a.role] ?? 9) - (roleOrder[b.role] ?? 9)
+    })
 
-      <div className="panel form-panel mb-4">
-        <div className="input-row">
-          <input placeholder="Name" value={newMember.name} onChange={e => setNewMember({ ...newMember, name: e.target.value })} />
-          <input type="number" placeholder="Age" value={newMember.age || ''} onChange={e => setNewMember({ ...newMember, age: Number(e.target.value) })} />
-          <select value={newMember.role} onChange={e => setNewMember({ ...newMember, role: e.target.value })}>
-            <option value="family">Family (Household)</option>
-            <option value="emergency_contact">Emergency Contact</option>
-            <option value="useful_contact">Useful Contact</option>
-          </select>
-          <input type="email" placeholder="Email" value={newMember.email} onChange={e => setNewMember({ ...newMember, email: e.target.value })} />
-          <input type="tel" placeholder="Phone" value={newMember.phone} onChange={e => setNewMember({ ...newMember, phone: e.target.value })} />
-          <input placeholder="Remarks (e.g. asthma, wheelchair)" value={newMember.remarks} onChange={e => setNewMember({ ...newMember, remarks: e.target.value })} />
-          <button className="btn-primary" onClick={addTeamMember}>Enlist</button>
-        </div>
+    return (
+    <div className="tab-pane animate-fade-in">
+      <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'1rem', flexWrap:'wrap', gap:'0.75rem'}}>
+        <h2 style={{margin:0}}>Personnel & Comms</h2>
+        <button
+          className="btn-primary"
+          style={{fontSize:'0.85rem', padding:'0.4rem 1rem', background: showAddMember ? 'var(--panel-border)' : undefined}}
+          onClick={() => setShowAddMember(p => !p)}
+        >
+          {showAddMember ? '\u2715 Close' : '+ Add Personnel'}
+        </button>
       </div>
 
+      {showAddMember && (
+        <div className="panel form-panel mb-4" style={{animation:'fadeIn 0.2s ease'}}>
+          <h4 style={{marginBottom:'0.75rem', color:'var(--accent-green)'}}>Enlist New Personnel</h4>
+          <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(160px,1fr))', gap:'0.6rem'}}>
+            <input placeholder="Name" value={newMember.name} onChange={e => setNewMember({ ...newMember, name: e.target.value })} />
+            <input type="number" placeholder="Age" value={newMember.age || ''} onChange={e => setNewMember({ ...newMember, age: Number(e.target.value) })} />
+            <select value={newMember.role} onChange={e => setNewMember({ ...newMember, role: e.target.value })}>
+              <option value="family">Family (Household)</option>
+              <option value="emergency_contact">Emergency Contact</option>
+              <option value="useful_contact">Useful Contact</option>
+            </select>
+            <input type="email" placeholder="Email" value={newMember.email} onChange={e => setNewMember({ ...newMember, email: e.target.value })} />
+            <input type="tel" placeholder="Phone (e.g. +60123456789)" value={newMember.phone} onChange={e => setNewMember({ ...newMember, phone: e.target.value })} />
+            <input placeholder="Skills (e.g. CPR, Nurse, Mechanic)" value={newMember.skills} onChange={e => setNewMember({ ...newMember, skills: e.target.value })} />
+            <input placeholder="Medical/Remarks (e.g. asthma, wheelchair)" value={newMember.remarks} onChange={e => setNewMember({ ...newMember, remarks: e.target.value })} style={{gridColumn:'span 2'}} />
+          </div>
+          <button className="btn-primary" style={{marginTop:'0.75rem'}} onClick={() => { addTeamMember(); setShowAddMember(false) }}>Enlist Personnel</button>
+        </div>
+      )}
+
       <div className="team-grid">
-        {team.map(member => {
+        {sorted.map(member => {
           if (editingMemberId === member.id) {
             return (
               <div key={member.id} className={`panel team-card role-${member.role}`}>
@@ -1180,7 +1206,8 @@ function App() {
                 </div>
                 <input style={{ marginBottom: '0.5rem' }} type="email" placeholder="Email" value={editMemberData.email} onChange={e => setEditMemberData({ ...editMemberData, email: e.target.value })} />
                 <input style={{ marginBottom: '0.5rem' }} type="tel" placeholder="Phone" value={editMemberData.phone} onChange={e => setEditMemberData({ ...editMemberData, phone: e.target.value })} />
-                <input style={{ marginBottom: '0.5rem' }} placeholder="Remarks" value={editMemberData.remarks} onChange={e => setEditMemberData({ ...editMemberData, remarks: e.target.value })} />
+                <input style={{ marginBottom: '0.5rem' }} placeholder="Skills (CPR, Nurse...)" value={editMemberData.skills || ''} onChange={e => setEditMemberData({ ...editMemberData, skills: e.target.value })} />
+                <input style={{ marginBottom: '0.5rem' }} placeholder="Medical/Remarks" value={editMemberData.remarks} onChange={e => setEditMemberData({ ...editMemberData, remarks: e.target.value })} />
                 <div style={{ display: 'flex', gap: '0.5rem' }}>
                   <button className="btn-primary" onClick={saveEditMember}>Save</button>
                   <button className="btn-primary" style={{ backgroundColor: 'var(--panel-border)', color: 'var(--text-main)' }} onClick={cancelEditMember}>Cancel</button>
@@ -1190,28 +1217,53 @@ function App() {
           }
 
           return (
-            <div key={member.id} className={`panel team-card role-${member.role}`}>
+            <div key={member.id} className={`panel team-card role-${member.role}`} style={member.pinned ? {boxShadow:'0 0 0 2px rgba(234,179,8,0.5), 0 0 8px rgba(234,179,8,0.15)'} : {}}>
               <div className="team-header">
-                <h4>{member.name} <span>({member.age})</span></h4>
-                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                  <button className="icon-btn" onClick={() => startEditMember(member)} title="Edit">
-                    <Edit2 size={16} />
-                  </button>
-                  <button className="icon-btn" onClick={() => setTeam(team.filter(i => i.id !== member.id))} title="Delete">
-                    <X size={18} />
-                  </button>
+                <div style={{display:'flex', alignItems:'center', gap:'0.4rem'}}>
+                  {member.pinned && <span title="Pinned" style={{fontSize:'0.9rem'}}>\u2b50</span>}
+                  <h4 style={{margin:0}}>{member.name} <span style={{color:'var(--text-muted)', fontWeight:'normal'}}>({member.age})</span></h4>
+                </div>
+                <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>
+                  <button className="icon-btn" onClick={() => togglePin(member.id)} title={member.pinned ? 'Unpin' : 'Pin to top'}
+                    style={{fontSize:'0.85rem'}}>{member.pinned ? '\u2b50' : '\u2606'}</button>
+                  <button className="icon-btn" onClick={() => startEditMember(member)} title="Edit"><Edit2 size={14} /></button>
+                  <button className="icon-btn" onClick={() => setTeam(team.filter(i => i.id !== member.id))} title="Delete"><X size={14} /></button>
                 </div>
               </div>
               <div className="team-role-tag">{member.role.replace('_', ' ').toUpperCase()}</div>
-              {member.email && <div className="team-contact text-muted">{member.email}</div>}
-              {member.phone && <div className="team-contact text-muted">{member.phone}</div>}
-              {member.remarks && <div className="team-contact text-yellow" style={{ fontSize: '0.8rem', marginTop: '0.5rem' }}>⚠️ {member.remarks}</div>}
+
+              {/* Contact details — always visible */}
+              {member.phone && (
+                <div style={{display:'flex', alignItems:'center', gap:'0.5rem', marginTop:'0.4rem'}}>
+                  <span className="text-muted" style={{fontSize:'0.82rem'}}>\ud83d\udcf1 {member.phone}</span>
+                  <a href={`tel:${member.phone}`} style={{fontSize:'0.7rem', padding:'2px 8px', borderRadius:'4px', background:'rgba(132,204,22,0.12)', border:'1px solid rgba(132,204,22,0.4)', color:'#84cc16', textDecoration:'none', fontWeight:'600'}}>\ud83d\udcde Call</a>
+                  <a href={`sms:${member.phone}`} style={{fontSize:'0.7rem', padding:'2px 8px', borderRadius:'4px', background:'rgba(59,130,246,0.12)', border:'1px solid rgba(59,130,246,0.4)', color:'#60a5fa', textDecoration:'none', fontWeight:'600'}}>\u2709\ufe0f SMS</a>
+                </div>
+              )}
+              {member.email && (
+                <div style={{marginTop:'0.3rem'}}>
+                  <a href={`mailto:${member.email}`} className="text-muted" style={{fontSize:'0.82rem', textDecoration:'none'}}>\u2709\ufe0f {member.email}</a>
+                </div>
+              )}
+              {member.skills && (
+                <div style={{marginTop:'0.4rem', display:'flex', gap:'0.3rem', flexWrap:'wrap'}}>
+                  {member.skills.split(',').map((s, i) => (
+                    <span key={i} style={{fontSize:'0.7rem', padding:'1px 7px', borderRadius:'4px', background:'rgba(132,204,22,0.1)', border:'1px solid rgba(132,204,22,0.3)', color:'#a3e635', fontWeight:'600'}}>
+                      \ud83d\udee0\ufe0f {s.trim()}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {member.remarks && (
+                <div className="text-yellow" style={{ fontSize: '0.8rem', marginTop: '0.4rem' }}>\u26a0\ufe0f {member.remarks}</div>
+              )}
             </div>
           )
         })}
       </div>
     </div>
-  )
+    )
+  }
 
   const renderActivity = () => (
     <div className="tab-pane animate-fade-in">
