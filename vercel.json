@@ -5,10 +5,5 @@
       "source": "/api/(.*)",
       "destination": "/api/index.py"
     }
-  ],
-  "functions": {
-    "api/index.py": {
-      "runtime": "vercel-python@0.0.0"
-    }
-  }
+  ]
 }
