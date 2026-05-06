@@ -46,36 +46,26 @@ The application runs a decoupled frontend-backend architecture perfectly suited 
 
 ---
 
-## 🤖 The Agent Network
+## 🤖 The Agent Network (4 Runtime Nodes)
 
-MyResilience uses **6 specialised AI agents**, each with a clearly scoped role and strict JSON output contract. 
+MyResilience features **6 specialised conceptual roles**, which have been structurally merged into **4 High-Density API Nodes** to drastically reduce Groq LLM token usage and circumvent API rate limits. Each node adheres to a strict JSON output contract.
 
-### 1. 🔭 The Watcher *(Meteorologist)*
+### Node 1: The Threat Assessor (Watcher + Assessor Merged)
 - **Trigger:** Every 5 minutes (Warning API) + Daily (Forecast API)
-- **Output:** `{ severity, disaster_type, expected_impact, time_to_impact_hours }`
-- **Intelligence:** Interprets Malay weather terms (`Ribut petir`, `Berjerebu`), detects official government `OFFICIAL WARNING` prefixes, and uses spatial proximity filtering to suppress warnings that are >150km away from the user.
+- **Intelligence:** Interprets Malay weather terms, detects official government warnings, and calculates immediate survival capacity (Water/Food/Mobility) in a single LLM pass. Output dictates the exact `evacuation_urgency`.
 
-### 2. ⚖️ The Assessor *(Survival Tactician)*
-- **Trigger:** After every Watcher run with an active threat
-- **Output:** `{ survival_score_days, evacuation_urgency, missing_critical_items }`
-- **Intelligence:** Calculates water survival (3L/person/day) and food survival. Applies a **Mobility Override** — if a team member has critical medical remarks (e.g. asthma, wheelchair), urgency is escalated.
+### Node 2: The Preparedness Briefing (Inventory + P.A.C.E. Merged)
+- **Trigger:** Debounced auto-sync when inventory changes.
+- **Intelligence:** Simultaneously calculates readiness score, flags low stock, and writes the 4-tier P.A.C.E. (Primary, Alternate, Contingency, Emergency) tactical doctrine in a single massive prompt execution.
 
-### 3. 📦 The Inventory Analyst *(Preparedness Expert)*
-- **Trigger:** Debounced auto-sync when inventory changes
-- **Output:** Readiness score (0–100), low-stock warnings, expiring items, 3 prioritised recommendations.
-
-### 4. 🗺️ The P.A.C.E. Strategist *(Tactical Planner)*
-- **Trigger:** Merged with Inventory Analyst to save tokens.
-- **Output:** Four-tier plan: `{ primary, alternate, contingency, emergency }`
-
-### 5. 📡 The Coordinator *(Emergency Dispatcher)*
-- **Trigger:** Threat detected by Watcher.
+### Node 3: The Coordinator *(Emergency Dispatcher)*
+- **Trigger:** Threat detected by the Threat Assessor.
 - **Autonomous Dispatch:** Upgraded logic decouples alert sending from inventory checks. The system will **automatically trigger alerts** the moment any active MET Malaysia threat is detected in the user's immediate vicinity.
 
-### 6. 🗺️ The Evacuation Advisor *(Field Commander)*
+### Node 4: The Evacuation Advisor *(Field Commander)*
 - **Trigger:** Auto-triggered on live threat or manual click.
 - **Output:** `{ shelter_locations[], enforcement_agencies[], routes_to_take[], areas_to_avoid }`
-- **Intelligence:** Integrates **OpenStreetMap (Nominatim)** reverse-geocoding to fetch *real-world* locations for shelters, PDRM, Bomba, and hospitals across Malaysia (verified for Peninsula, Sabah, and Sarawak).
+- **Intelligence:** Integrates **OpenStreetMap (Nominatim)** reverse-geocoding to fetch *real-world* locations for shelters, PDRM, Bomba, and hospitals across Malaysia.
 
 ---
 
