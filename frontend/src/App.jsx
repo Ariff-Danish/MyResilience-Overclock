@@ -268,6 +268,26 @@ function App() {
     setEvacLoading(false)
   }
 
+  // --- THREAT MAP AUTONOMOUS MODE ---
+  // Auto-locates user and auto-generates advisory the moment Threat Map tab opens
+  useEffect(() => {
+    if (activeTab !== 'threatmap') return
+    // Auto-request GPS location silently
+    if (!userLocation && !locationLoading && navigator.geolocation) {
+      setLocationLoading(true)
+      setLocationError(null)
+      navigator.geolocation.getCurrentPosition(
+        pos => { setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude }); setLocationLoading(false) },
+        () => { setLocationError('Location access denied — using region data for advisory.'); setLocationLoading(false) },
+        { enableHighAccuracy: true, timeout: 10000 }
+      )
+    }
+    // Auto-generate evacuation advisory — no user click needed
+    if (!evacAdvisory && !evacLoading) {
+      runEvacuationAdvisory(false)
+    }
+  }, [activeTab]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // --- LIVE POLLING & DEMO MODE ---
   useEffect(() => {
     const pollWeather = async (isDaily = false) => {
@@ -871,14 +891,20 @@ function App() {
               {inventoryAnalysis.critical_gaps.length > 0 && (
                 <div className="gaps-row">
                   <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: 'var(--warning)' }}>⚠ GAPS:</span>
-                  {inventoryAnalysis.critical_gaps.map(g => <span key={g} className="gap-tag">{g}</span>)}
+                  {inventoryAnalysis.critical_gaps.map(g => (
+                    <span key={g} className="gap-tag clickable-tag" title="Click to view inventory"
+                      onClick={() => setActiveTab('inventory')}>{g}</span>
+                  ))}
                 </div>
               )}
               {inventoryAnalysis.low_stock_items?.length > 0 && (
                 <div className="gaps-row" style={{ marginTop: '0.4rem' }}>
                   <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: 'var(--danger)' }}>📉 LOW STOCK:</span>
                   {inventoryAnalysis.low_stock_items.slice(0, 4).map(item => (
-                    <span key={item} className="gap-tag" style={{ borderColor: 'rgba(239,68,68,0.4)', color: '#f87171' }}>{item}</span>
+                    <span key={item} className="gap-tag clickable-tag"
+                      style={{ borderColor: 'rgba(239,68,68,0.4)', color: '#f87171' }}
+                      title="Click to filter low stock items"
+                      onClick={() => { setActiveTab('inventory'); setFilterMode('low_stock') }}>{item}</span>
                   ))}
                 </div>
               )}
@@ -886,7 +912,10 @@ function App() {
                 <div className="gaps-row" style={{ marginTop: '0.4rem' }}>
                   <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: 'var(--warning)' }}>⏳ EXPIRING:</span>
                   {inventoryAnalysis.expiring_items.slice(0, 3).map(item => (
-                    <span key={item} className="gap-tag" style={{ borderColor: 'rgba(234,179,8,0.4)', color: '#facc15' }}>{item}</span>
+                    <span key={item} className="gap-tag clickable-tag"
+                      style={{ borderColor: 'rgba(234,179,8,0.4)', color: '#facc15' }}
+                      title="Click to filter expiring items"
+                      onClick={() => { setActiveTab('inventory'); setFilterMode('expiring') }}>{item}</span>
                   ))}
                 </div>
               )}
@@ -1451,19 +1480,14 @@ function App() {
         <>
           <div className="panel evac-empty-state">
             <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>🗺️</div>
-            <h3>Evacuation Advisor Ready</h3>
+            <h3>Initializing Threat Map...</h3>
             <p className="text-muted" style={{ maxWidth: '500px', margin: '0 auto 0.75rem', lineHeight: '1.6' }}>
-              Click <strong>Run Advisory</strong> to generate a real-time evacuation plan with shelter locations,
-              enforcement agencies, safe routes, and avoidance zones —{' '}
+              Auto-detecting your location and generating a real-time evacuation plan —{' '}
               {userRegionDisplay
                 ? <strong style={{ color: 'var(--info)' }}>tailored for {userRegionDisplay.split(',')[0]}</strong>
-                : 'for your current location across all of Malaysia'}.
+                : 'for your region across Malaysia'}.
             </p>
-            {!userRegionDisplay && (
-              <p className="text-muted" style={{ fontSize: '0.8rem', margin: '0 auto', maxWidth: '400px' }}>
-                💡 Click <strong>Locate Me</strong> first for a location-specific advisory (Sabah, Sarawak, or any Malaysian state).
-              </p>
-            )}
+            <div className="evac-spinner" style={{ fontSize: '1.5rem', marginTop: '0.5rem' }}>⟳</div>
           </div>
 
           {/* Official Malaysian Data Sources Panel */}
