@@ -1217,44 +1217,10 @@ function App() {
         <h2>🗺️ Threat Map — Evacuation Advisory</h2>
         <div style={{display:'flex', gap:'0.75rem', flexWrap:'wrap', alignItems:'center'}}>
           {/* B4 — Disaster Type Selector */}
-          <div className="disaster-selector">
-            <label className="text-muted" style={{fontSize:'0.8rem', fontWeight:'600'}}>SCENARIO</label>
-            <select
-              value={selectedDisasterType}
-              onChange={e => setSelectedDisasterType(e.target.value)}
-              style={{minWidth:'140px'}}
-            >
-              <option value="auto">🔴 Auto (Live)</option>
-              <option value="flood">🌊 Flood</option>
-              <option value="storm">⛈️ Storm</option>
-              <option value="haze">🌫️ Haze</option>
-              <option value="fire">🔥 Fire</option>
-              <option value="earthquake">🌏 Earthquake</option>
-            </select>
+          <div className="live-status-badge" style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', background: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', borderRadius: '12px', fontWeight: 'bold', fontSize: '0.9rem', border: '1px solid rgba(239, 68, 68, 0.3)' }}>
+            <span style={{ width: '8px', height: '8px', background: '#ef4444', borderRadius: '50%', boxShadow: '0 0 8px #ef4444', animation: 'pulse 2s infinite' }}></span>
+            LIVE AUTONOMOUS MONITORING
           </div>
-          <button
-            className="btn-primary"
-            onClick={() => runEvacuationAdvisory(false)}
-            disabled={evacLoading}
-          >
-            {evacLoading ? '⟳ Generating...' : '⚡ Run Advisory'}
-          </button>
-          {evacAdvisory && (
-            <button
-              className="btn-sms"
-              onClick={() => runEvacuationAdvisory(true)}
-              disabled={evacLoading}
-            >
-              📱 Send SMS Alerts
-            </button>
-          )}
-          <button
-            className={`btn-locate ${userLocation ? 'located' : ''}`}
-            onClick={handleLocateMe}
-            disabled={locationLoading}
-          >
-            {locationLoading ? '⟳ Locating...' : userLocation ? '📍 Located' : '📍 Locate Me'}
-          </button>
         </div>
       </div>
       {locationError && (
