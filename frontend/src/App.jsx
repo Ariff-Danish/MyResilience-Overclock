@@ -103,46 +103,36 @@ function App() {
   const [agentStatus, setAgentStatus] = useState(null)
   const [agentEvents, setAgentEvents] = useState([])
   const [agentBriefing, setAgentBriefing] = useState(null)
-  const [wsConnected, setWsConnected] = useState(false)
+  const [agentConnected, setAgentConnected] = useState(false)
   const [briefingLoading, setBriefingLoading] = useState(false)
-  const wsRef = useRef(null)
-  const wsRetryRef = useRef(0)
 
-  // WebSocket connection to agent system
+  // REST polling for agent status (works on Vercel serverless — no WebSocket needed)
   useEffect(() => {
-    let ws = null
-    let retryTimeout = null
-    const connect = () => {
-      const wsUrl = API_URL.replace(/^http/, 'ws') + '/api/agents/ws'
-      ws = new WebSocket(wsUrl)
-      wsRef.current = ws
-      ws.onopen = () => {
-        setWsConnected(true)
-        wsRetryRef.current = 0
+    let interval = null
+    let active = true
+
+    const pollStatus = async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/agents/status`)
+        if (!res.ok) throw new Error('status fetch failed')
+        const data = await res.json()
+        if (active) {
+          setAgentStatus(data)
+          setAgentConnected(true)
+        }
+      } catch {
+        if (active) setAgentConnected(false)
       }
-      ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data)
-          if (data.type === 'status_update' || data.agents) {
-            setAgentStatus(data)
-          }
-          if (data.type === 'event' || data.event) {
-            setAgentEvents(prev => [data.event || data, ...prev].slice(0, 50))
-          }
-        } catch {}
-      }
-      ws.onclose = () => {
-        setWsConnected(false)
-        const delay = Math.min(1000 * Math.pow(2, wsRetryRef.current), 30000)
-        wsRetryRef.current++
-        retryTimeout = setTimeout(connect, delay)
-      }
-      ws.onerror = () => {}
     }
-    connect()
+
+    // Initial fetch
+    pollStatus()
+    // Poll every 30 seconds
+    interval = setInterval(pollStatus, 30000)
+
     return () => {
-      clearTimeout(retryTimeout)
-      if (ws) ws.close()
+      active = false
+      clearInterval(interval)
     }
   }, [])
 
@@ -152,7 +142,8 @@ function App() {
     fetch(`${API_URL}/api/agents/events`)
       .then(r => r.json())
       .then(data => {
-        if (Array.isArray(data)) setAgentEvents(data.slice(0, 50))
+        const events = data?.events || data
+        if (Array.isArray(events)) setAgentEvents(events.slice(0, 50))
       })
       .catch(() => {})
   }, [activeTab])
@@ -1994,8 +1985,9 @@ function App() {
       briefing: { emoji: '📋', name: 'Briefing', color: 'var(--cyan)' },
     }
 
-    const agents = agentStatus?.agents || []
-    const orchestratorStatus = agentStatus?.orchestrator_status || 'unknown'
+    const agentsObj = agentStatus?.agents || {}
+    const agents = Object.entries(agentsObj).map(([id, data]) => ({ id, ...data }))
+    const orchestratorStatus = agentStatus?.orchestrator?.status || 'unknown'
 
     const handleGenerateBriefing = async () => {
       setBriefingLoading(true)
@@ -2037,9 +2029,9 @@ function App() {
             <div>
               <div className="overview-label">Connection</div>
               <div className="overview-value">
-                <span className={`ws-status ${wsConnected ? 'connected' : 'disconnected'}`}>
+                <span className={`ws-status ${agentConnected ? 'connected' : 'disconnected'}`}>
                   <span className="ws-status-dot" />
-                  {wsConnected ? 'Live' : 'Disconnected'}
+                  {agentConnected ? 'Live' : 'Disconnected'}
                 </span>
               </div>
             </div>
