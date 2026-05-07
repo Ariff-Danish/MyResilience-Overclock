@@ -874,7 +874,7 @@ function App() {
   const getSortedInventory = () => {
     const arr = [...inventory];
     if (sortBy === 'category') {
-      return arr.sort((a, b) => a.category.localeCompare(b.category))
+      return arr.sort((a, b) => (a.category || '').localeCompare(b.category || ''))
     } else if (sortBy === 'stock') {
       return arr.sort((a, b) => {
         const ratioA = a.target_amount ? a.current_amount / a.target_amount : 0
@@ -1132,7 +1132,7 @@ function App() {
                   .trim()
                 return (
                   <div className="alert-box critical mb-4">
-                    <h4>🚨 {liveWeather.alerts[0].type.toUpperCase()}</h4>
+                    <h4>🚨 {(liveWeather.alerts[0].type || 'Weather Alert').toUpperCase()}</h4>
                     {cleanDesc && <p>{cleanDesc}</p>}
                     {liveWeather.alerts[0].proximity_km != null && (
                       <span className="proximity-tag nearby">⚠️ {liveWeather.alerts[0].proximity_km} km from you</span>

@@ -208,15 +208,17 @@ async def health_check():
         supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
         if supabase_url and supabase_key:
             import requests as req_lib
+            # Use the root REST endpoint — no table dependency
             resp = req_lib.get(
-                f"{supabase_url}/rest/v1/profiles?select=id&limit=1",
+                f"{supabase_url}/rest/v1/",
                 headers={
                     "apikey": supabase_key,
                     "Authorization": f"Bearer {supabase_key}",
                 },
                 timeout=5,
             )
-            if resp.status_code == 200:
+            if resp.status_code in (200, 404):
+                # 200 = tables exist, 404 = no tables but Supabase is reachable
                 db_status = "connected"
             else:
                 db_status = f"error: HTTP {resp.status_code} — {resp.text[:80]}"

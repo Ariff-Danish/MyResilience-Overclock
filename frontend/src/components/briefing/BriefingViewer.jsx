@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useAuth } from '../../lib/AuthContext'
 import { authenticatedFetch } from '../../lib/api'
 
-const API_URL = import.meta.env.VITE_API_URL || ''
+const API_URL = import.meta.env.VITE_API_URL || 'https://myresilience-overclock-api.vercel.app'
 
 const PHASE_LABELS = {
   health_check: { label: 'Health Check', icon: '🏥', color: '#06b6d4' },
