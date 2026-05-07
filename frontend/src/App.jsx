@@ -21,7 +21,7 @@ const haversineKm = (lat1, lng1, lat2, lng2) => {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
 }
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const API_URL = import.meta.env.VITE_API_URL || 'https://myresilience-overclock-api.vercel.app'
 
 function App() {
   const { toasts, addToast, dismissToast } = useNotifications()
@@ -189,7 +189,7 @@ function App() {
       }
       setTeam(prev => [...prev, newMember])
       logEvent('🪪 ID Scanned', 'Camera OCR', ['ID Scanner'], `Added ${result.full_name} (${result.id_type || 'ID'}) via camera scan`, 'info')
-      addToast(`✅ Added ${result.full_name} from ID scan`, 'success')
+      addToast('success', 'ID Scanned', `Added ${result.full_name} from ID scan`)
     }
   }
 
@@ -214,7 +214,7 @@ function App() {
       }
       setInventory(prev => [...prev, newItem])
       logEvent('📦 Asset Scanned', 'Camera Recognition', ['Asset Scanner'], `Added ${result.asset_name} (${result.asset_type || 'item'}) via camera scan`, 'info')
-      addToast(`✅ Added ${result.asset_name} to inventory`, 'success')
+      addToast('success', 'Asset Scanned', `Added ${result.asset_name} to inventory`)
     }
   }
 
@@ -745,10 +745,22 @@ function App() {
     }
   }
 
+  // Best-effort background sync to backend — localStorage is the primary store
+  const saveToDb = async (type, data) => {
+    try {
+      const endpoint = type === 'inventory' ? 'inventory' : 'team'
+      await fetch(`${API_URL}/api/data/${endpoint}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      })
+    } catch (err) { console.error(`[saveToDb] Background sync failed for ${type}:`, err) }
+  }
+
   const deleteFromDb = async (type, id) => {
     try {
       const endpoint = type === 'inventory' ? 'inventory' : 'team'
-      await fetch(`${API}/api/data/${endpoint}/${id}`, { method: 'DELETE' })
+      await fetch(`${API_URL}/api/data/${endpoint}/${id}`, { method: 'DELETE' })
     } catch (err) { console.error(`Failed to delete ${type}:`, err) }
   }
 
@@ -794,7 +806,7 @@ function App() {
     setInventory(prev => [newItem, ...prev])
     saveToDb('inventory', newItem)
     logEvent('🎤 Voice Add', 'Voice Command', ['Voice Assistant'], `Added ${item.name} (${item.quantity || 1}) via voice`, 'info')
-    addToast(`✅ Added ${item.name} via voice`, 'success')
+    addToast('success', 'Voice Add', `Added ${item.name} via voice`)
   }
 
   const handleVoiceUpdate = (itemName, quantity) => {
@@ -804,9 +816,9 @@ function App() {
       setInventory(prev => prev.map(i => i.id === found.id ? updated : i))
       saveToDb('inventory', updated)
       logEvent('🎤 Voice Update', 'Voice Command', ['Voice Assistant'], `Updated ${found.name} to ${quantity} via voice`, 'info')
-      addToast(`✅ Updated ${found.name} to ${quantity}`, 'success')
+      addToast('success', 'Voice Update', `Updated ${found.name} to ${quantity}`)
     } else {
-      addToast(`⚠️ Item "${itemName}" not found in inventory`, 'warning')
+      addToast('warning', 'Not Found', `Item "${itemName}" not found in inventory`)
     }
   }
 
@@ -815,16 +827,16 @@ function App() {
     if (found) {
       setInventory(prev => prev.filter(i => i.id !== found.id))
       logEvent('🎤 Voice Delete', 'Voice Command', ['Voice Assistant'], `Removed ${found.name} via voice`, 'info')
-      addToast(`🗑️ Removed ${found.name}`, 'success')
+      addToast('success', 'Voice Delete', `Removed ${found.name}`)
     } else {
-      addToast(`⚠️ Item "${itemName}" not found`, 'warning')
+      addToast('warning', 'Not Found', `Item "${itemName}" not found`)
     }
   }
 
   const handleVoiceSearch = (query) => {
     setFilterMode('all')
     // The search will be handled by filtering in the render
-    addToast(`🔍 Searching for "${query}"`, 'info')
+    addToast('info', 'Voice Search', `Searching for "${query}"`)
   }
 
   const [newMember, setNewMember] = useState({ name: '', age: 0, role: 'family', email: '', phone: '', remarks: '', skills: '', pinned: false })
