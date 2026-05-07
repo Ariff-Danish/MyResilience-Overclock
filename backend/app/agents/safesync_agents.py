@@ -1090,14 +1090,14 @@ OUTPUT (STRICT JSON):
 }
 """
 
-async def run_sos_triage_agent(chat_history: list[dict]) -> SOSTriageResult:
+async def run_sos_triage_agent(chat_history: list[dict], user_context: str = "") -> SOSTriageResult:
     try:
         # Format history into a readable string for the prompt
         formatted_history = "CONVERSATION HISTORY:\n"
         for msg in chat_history:
             formatted_history += f"[{msg['role'].upper()}]: {msg['content']}\n"
         
-        user_prompt = f"{formatted_history}\n\nAssess the conversation and provide the triage response."
+        user_prompt = f"USER CONTEXT (Inventory & Team):\n{user_context}\n\n{formatted_history}\n\nAssess the conversation and provide the triage response. Consider their inventory and team context if they request dynamic updates."
         result = await _call_groq(SOS_TRIAGE_PROMPT, user_prompt, max_tokens=300)
         return SOSTriageResult(**result)
     except Exception as e:

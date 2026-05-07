@@ -656,6 +656,201 @@ async def sos_trigger(req: SOSRequest):
         return result.model_dump()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+            "analysis": {
+                "survival_days_water":  b["survival_days_water"],
+                "survival_days_food":   b["survival_days_food"],
+                "overall_days":         b["overall_days"],
+                "readiness_score":      b["readiness_score"],
+                "low_stock_items":      b["low_stock_items"],
+                "expiring_soon_items":  b["expiring_soon_items"],
+                "critical_gaps":        b["critical_gaps"],
+                "recommendations":      b["recommendations"],
+                "summary":              b["summary"],
+                "reasoning":            b["reasoning"],
+            },
+            "pace": {
+                "primary":     b["pace_primary"],
+                "alternate":   b["pace_alternate"],
+                "contingency": b["pace_contingency"],
+                "emergency":   b["pace_emergency"],
+                "reasoning":   b["pace_reasoning"],
+            },
+            # Legacy: coordinator_message kept for backward compatibility
+            "coordinator_message": b["summary"],
+        }
+        
+        if req.settings and req.settings.emailPreparedness:
+            from app.agents.safesync_agents import InventoryAnalysisResult
+            ia_data = {k: b[k] for k in InventoryAnalysisResult.model_fields.keys() if k in b}
+            ia = InventoryAnalysisResult(**ia_data)
+            asyncio.create_task(run_coordinator_agent(
+                inventory_analysis=ia, team=req.team, location=req.location or "Malaysia", settings_pref=req.settings
+            ))
+            
+        return response_data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/evaluate_risk")
+async def evaluate_risk(req: RiskEvaluationRequest, demo: bool = False, demo_scenario: int = 1):
+    try:
+        # Resolve user location
+        user_location_name = "Petaling"
+        user_location_display = req.location
+
+        if req.user_lat is not None and req.user_lng is not None:
+            geocode_result = await asyncio.to_thread(reverse_geocode, req.user_lat, req.user_lng)
+            city = geocode_result.get("city", "")
+            state = geocode_result.get("state", "")
+            user_location_name = city or state or "Petaling"
+            user_location_display = f"{city}, {state}, Malaysia" if city and state else req.location
+
+        raw_weather = await fetch_mock_weather_data(demo, user_location_name, demo_scenario)
+        weather_dict = json.loads(raw_weather)
+
+        # Proximity filter: suppress distant alerts
+        nearby_alerts, distant_alerts = [], []
+        if req.user_lat is not None and req.user_lng is not None:
+            nearby_alerts, distant_alerts = filter_alerts_by_proximity(
+                weather_dict.get("alerts", []), req.user_lat, req.user_lng
+            )
+            # Replace alerts with proximity-filtered ones before passing to agents
+            weather_dict["alerts"] = nearby_alerts
+            raw_weather = json.dumps(weather_dict)
+
+        inv = [i.model_dump() for i in req.inventory]
+        team = [t.model_dump() for t in req.team]
+
+        # ── MERGED: Single ThreatAssessor call replaces Watcher + Assessor (saves ~50% tokens)
+        threat = await run_threat_assessor_agent(raw_weather, inv, team)
+
+        # Unpack into legacy Watcher/Assessor shapes for Coordinator compatibility
+        weather = WeatherAssessmentResult(
+            severity=threat.severity,
+            disaster_type=threat.disaster_type,
+            expected_impact=threat.expected_impact,
+            time_to_impact_hours=threat.time_to_impact_hours,
+        )
+        survival = SurvivalResult(
+            survival_score_days=threat.survival_score_days,
+            evacuation_urgency=threat.evacuation_urgency,
+            missing_critical_items=threat.missing_critical_items,
+            reasoning=threat.reasoning,
+        )
+
+        coordinator = await run_coordinator_agent(
+            weather=weather, survival=survival, team=team, location=user_location_display,
+            settings_pref=req.settings
+        )
+
+        # Autonomous dispatch — only if user is actually in an affected area
+        evac_data = None
+        sms_auto_results = []
+        if survival.evacuation_urgency in ["immediate", "prepare"] and nearby_alerts:
+            try:
+                evac_result = await run_evacuation_advisor_agent(
+                    disaster_type=weather.disaster_type,
+                    severity=weather.severity,
+                    location=user_location_display,
+                    team=team,
+                    user_lat=req.user_lat,
+                    user_lng=req.user_lng,
+                )
+                evac_data = evac_result.model_dump()
+                phone_numbers = [m.get("phone", "").strip() for m in team if m.get("phone", "").strip()]
+                if phone_numbers:
+                    sms_auto_results = send_bulk_sms(phone_numbers, evac_result.sms_alert_text)
+                else:
+                    sms_auto_results = [{"status": "skipped", "reason": "No phone numbers in team roster"}]
+            except Exception as evac_err:
+                print(f"[AUTO-EVAC] Advisory failed (non-critical): {evac_err}")
+
+        return {
+            "weather_severity": weather.severity,
+            "weather_disaster_type": weather.disaster_type,
+            "expected_impact": weather.expected_impact,
+            "time_to_impact_hours": weather.time_to_impact_hours,
+            "survival_score_days": survival.survival_score_days,
+            "evacuation_urgency": survival.evacuation_urgency,
+            "missing_critical_items": survival.missing_critical_items,
+            "action_taken": coordinator.action_taken,
+            "message_drafted": coordinator.message_drafted,
+            "contacts_notified": coordinator.contacts_notified,
+            "evacuation_advisory": evac_data,
+            "sms_auto_results": sms_auto_results,
+            # Location context for frontend display
+            "user_location": user_location_display,
+            "nearby_alert_count": len(nearby_alerts),
+            "distant_alert_count": len(distant_alerts),
+            "distant_alerts": distant_alerts,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/evacuation_advisory")
+async def evacuation_advisory(req: EvacuationAdvisoryRequest):
+    """
+    Run Groq Evacuation Advisor for the user's actual location.
+    If user_lat/lng provided, uses reverse-geocoded location name.
+    """
+    try:
+        location = req.location
+        if req.user_lat is not None and req.user_lng is not None:
+            geocode_result = await asyncio.to_thread(reverse_geocode, req.user_lat, req.user_lng)
+            city = geocode_result.get("city", "")
+            state = geocode_result.get("state", "")
+            if city or state:
+                location = f"{city}, {state}, Malaysia" if city and state else f"{state}, Malaysia"
+
+        team_data = [t.model_dump() for t in req.team]
+        result = await run_evacuation_advisor_agent(
+            disaster_type=req.disaster_type,
+            severity=req.severity,
+            location=location,
+            team=team_data,
+            user_lat=req.user_lat,
+            user_lng=req.user_lng,
+        )
+
+        sms_results = []
+        if req.send_sms_alerts:
+            phone_numbers = [m.phone for m in req.team if m.phone and m.phone.strip()]
+            if phone_numbers:
+                sms_results = send_bulk_sms(phone_numbers, result.sms_alert_text)
+            else:
+                sms_results = [{"status": "skipped", "reason": "No phone numbers found in team roster"}]
+
+        return {
+            **result.model_dump(),
+            "sms_results": sms_results,
+            "resolved_location": location,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+class VoiceCommandRequest(BaseModel):
+    transcript: str
+
+@router.post("/parse_voice_command")
+async def parse_voice_command(req: VoiceCommandRequest):
+    try:
+        result = await run_voice_parser_agent(req.transcript)
+        return result.model_dump()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+class SOSRequest(BaseModel):
+    transcript: str
+
+@router.post("/sos_trigger")
+async def sos_trigger(req: SOSRequest):
+    try:
+        result = await run_sos_assessor_agent(req.transcript)
+        return result.model_dump()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 class SOSChatMessage(BaseModel):
     role: str
@@ -663,13 +858,14 @@ class SOSChatMessage(BaseModel):
 
 class SOSChatRequest(BaseModel):
     history: list[SOSChatMessage]
+    user_context: str = ""
     
 @router.post("/sos_chat")
 async def sos_chat(req: SOSChatRequest):
     try:
         # Convert history to dicts for the agent
         chat_history = [{"role": msg.role, "content": msg.content} for msg in req.history]
-        result = await run_sos_triage_agent(chat_history)
+        result = await run_sos_triage_agent(chat_history, req.user_context)
         return result.model_dump()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

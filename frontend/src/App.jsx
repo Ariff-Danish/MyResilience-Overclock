@@ -28,6 +28,7 @@ function App() {
   const [sosChatHistory, setSosChatHistory] = useState([])
   const [sosChatInput, setSosChatInput] = useState('')
   const [isSosChatLoading, setIsSosChatLoading] = useState(false)
+  const [activeRescues, setActiveRescues] = useState([])
 
   // ── Demo Scenario Presets ──────────────────────────────────────────────────────
   const DEMO_SCENARIOS = [
@@ -897,6 +898,26 @@ function App() {
 
   const renderDashboard = () => (
     <div className="tab-pane animate-fade-in">
+      {showSosChat && <div style={{marginBottom: '2rem'}}>{renderSosChat()}</div>}
+      
+      {!showSosChat && (
+          <div style={{display: 'flex', justifyContent: 'center', marginBottom: '2rem'}}>
+            <button 
+              className="sos-btn pulse-red"
+              onClick={handleSOSClick}
+              style={{
+                width: '150px', height: '150px', borderRadius: '50%', 
+                backgroundColor: 'var(--danger)', color: 'white', fontSize: '1.5rem', 
+                fontWeight: 'bold', border: '6px solid rgba(255, 59, 48, 0.3)', cursor: 'pointer',
+                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                transition: 'transform 0.2s'
+              }}>
+              <LifeBuoy size={40} style={{marginBottom: '0.5rem'}} />
+              SOS
+            </button>
+          </div>
+      )}
+
       <div className="dash-header">
         <div style={{display:'flex', alignItems:'center', gap:'1rem'}}>
           <h2>⚡ COMMAND DASHBOARD</h2>
@@ -1769,10 +1790,11 @@ function App() {
     setIsSosChatLoading(true)
 
     try {
+      const userContextStr = JSON.stringify({ inventory, team });
       const res = await fetch(`${API}/api/sos_chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ history: newHistory })
+        body: JSON.stringify({ history: newHistory, user_context: userContextStr })
       })
       const data = await res.json()
       
@@ -1793,10 +1815,22 @@ function App() {
         }
         setActivityEvents(prev => [event, ...prev])
 
-        // Force user to Threat Map tab
+        const rescue = {
+            id: Date.now().toString(),
+            time: new Date().toLocaleTimeString(),
+            threatLevel: data.threat_level,
+            location: userLocation,
+            teamCount: team.length,
+            inventorySummary: inventory.length > 0 ? `${inventory.length} distinct item types` : 'None',
+            details: `Suggested Action: ${data.suggested_action}\nReasoning: ${data.escalation_reasoning}`,
+            inventorySnapshot: JSON.parse(JSON.stringify(inventory)),
+            teamSnapshot: JSON.parse(JSON.stringify(team))
+        }
+        setActiveRescues(prev => [rescue, ...prev])
+
         setTimeout(() => {
-          setActiveUserTab('threatmap')
-          runEvacuationAdvisory(false) // Auto-run advisory
+          setActiveTab('threatmap')
+          runEvacuationAdvisory(false)
           setShowSosChat(false)
         }, 4000)
       } else {
@@ -1862,37 +1896,38 @@ function App() {
     </div>
   )
 
-  const renderUserDashboard = () => (
-    <div className="tab-pane animate-fade-in" style={{textAlign: 'center', maxWidth: '800px', margin: '0 auto', paddingTop: '2rem'}}>
-      {showSosChat ? renderSosChat() : (
-        <>
-          <h2 style={{fontSize: '2.5rem', marginBottom: '3rem'}}>SafeSync</h2>
-          <div style={{display: 'flex', justifyContent: 'center', marginBottom: '4rem'}}>
-            <button 
-              className="sos-btn pulse-red"
-              onClick={handleSOSClick}
-              style={{
-                width: '250px', height: '250px', borderRadius: '50%', 
-                backgroundColor: 'var(--danger)', color: 'white', fontSize: '2rem', 
-                fontWeight: 'bold', border: '8px solid rgba(255, 59, 48, 0.3)', cursor: 'pointer',
-                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-                transition: 'transform 0.2s'
-              }}>
-              <LifeBuoy size={80} style={{marginBottom: '1rem'}} />
-              SOS
-            </button>
-          </div>
 
-          {voiceError && <div className="text-yellow" style={{fontSize: '1.2rem', marginBottom: '2rem'}}>{voiceError}</div>}
 
-          {inventoryAnalysis?.survival_guide_markdown ? (
-            <div className="panel text-left" style={{backgroundColor: 'var(--panel-bg)', padding: '2rem', borderRadius: '12px'}}>
-              <div className="markdown-content" dangerouslySetInnerHTML={{__html: inventoryAnalysis.survival_guide_markdown.replace(/\\n/g, '<br/>')}}></div>
+  const renderRescues = () => (
+    <div className="tab-pane animate-fade-in" style={{paddingBottom: '2rem'}}>
+      <h2 style={{marginBottom: '1rem'}}>Users in Trouble (Rescues)</h2>
+      {activeRescues.length === 0 ? (
+        <div className="panel" style={{textAlign: 'center', padding: '3rem', color: 'var(--muted)'}}>
+          <ShieldCheck size={48} style={{margin: '0 auto 1rem', opacity: 0.5}} />
+          <p>No active rescues at this time.</p>
+        </div>
+      ) : (
+        <div style={{display: 'flex', flexDirection: 'column', gap: '1rem'}}>
+          {activeRescues.map(rescue => (
+            <div key={rescue.id} className={`panel ${rescue.threatLevel === 'critical' ? 'critical-border' : 'warning-border'}`} style={{borderLeft: `4px solid ${rescue.threatLevel === 'critical' ? 'var(--danger)' : 'var(--warning)'}`}}>
+              <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem'}}>
+                <h3 style={{margin: 0}}>SOS Alert - {rescue.location}</h3>
+                <span className="text-muted">{rescue.time}</span>
+              </div>
+              <div style={{display: 'flex', gap: '2rem', fontSize: '0.9rem', marginBottom: '1rem'}}>
+                <span><strong>People:</strong> {rescue.teamCount}</span>
+                <span><strong>Inventory:</strong> {rescue.inventorySummary}</span>
+                <span style={{color: rescue.threatLevel === 'critical' ? 'var(--danger)' : 'var(--warning)', fontWeight: 'bold'}}>{rescue.threatLevel.toUpperCase()} THREAT</span>
+              </div>
+              <div style={{backgroundColor: 'var(--bg-main)', padding: '1rem', borderRadius: '8px', fontSize: '0.85rem', whiteSpace: 'pre-wrap'}}>
+                {rescue.details}
+              </div>
+              <div style={{marginTop: '1rem'}}>
+                <button className="btn-primary" onClick={() => alert("Dispatching Rescue Team to " + rescue.location)}>Dispatch Rescue</button>
+              </div>
             </div>
-          ) : (
-            <p className="text-muted">Survival Guide currently unavailable. Admin must run Preparedness Audit.</p>
-          )}
-        </>
+          ))}
+        </div>
       )}
     </div>
   )
@@ -1907,24 +1942,18 @@ function App() {
         
         <nav className="sidebar-nav">
           <div style={{padding: '1rem', borderBottom: '1px solid var(--panel-border)', marginBottom: '1rem', display: 'flex', justifyContent: 'center'}}>
-            <button className="btn-primary" style={{width: '100%', fontSize: '0.8rem', padding: '0.5rem'}} onClick={() => setIsAdmin(!isAdmin)}>
+            <button className="btn-primary" style={{width: '100%', fontSize: '0.8rem', padding: '0.5rem'}} onClick={() => {
+              setIsAdmin(!isAdmin);
+              setActiveTab(!isAdmin ? 'rescues' : 'dashboard');
+            }}>
               {isAdmin ? 'Switch to User View' : 'Switch to Admin View'}
             </button>
           </div>
 
           {!isAdmin ? (
             <>
-              <button className={activeUserTab === 'dashboard' ? 'active' : ''} onClick={() => setActiveUserTab('dashboard')}>
-                <Activity className="nav-icon" /> {isSidebarOpen && 'Survival Dashboard'}
-              </button>
-              <button className={activeUserTab === 'threatmap' ? 'active' : ''} onClick={() => setActiveUserTab('threatmap')}>
-                <Map className="nav-icon" /> {isSidebarOpen && 'Evacuation Map'}
-              </button>
-            </>
-          ) : (
-            <>
               <button className={activeTab === 'dashboard' ? 'active' : ''} onClick={() => setActiveTab('dashboard')}>
-                <Radar className="nav-icon" /> {isSidebarOpen && 'Dashboard'}
+                <Radar className="nav-icon" /> {isSidebarOpen && 'Survival Dashboard'}
               </button>
               <button className={activeTab === 'inventory' ? 'active' : ''} onClick={() => setActiveTab('inventory')}>
                 <PackageSearch className="nav-icon" /> {isSidebarOpen && 'Inventory'}
@@ -1932,11 +1961,20 @@ function App() {
               <button className={activeTab === 'team' ? 'active' : ''} onClick={() => setActiveTab('team')}>
                 <Users className="nav-icon" /> {isSidebarOpen && 'Personnel'}
               </button>
-              <button className={activeTab === 'activity' ? 'active' : ''} onClick={() => setActiveTab('activity')}>
-                <Activity className="nav-icon" /> {isSidebarOpen && 'Activity Network'}
+              <button className={activeTab === 'threatmap' ? 'active' : ''} onClick={() => setActiveTab('threatmap')}>
+                <Map className="nav-icon" /> {isSidebarOpen && 'Evacuation Map'}
               </button>
               <button className={activeTab === 'settings' ? 'active' : ''} onClick={() => setActiveTab('settings')}>
                 <Settings className="nav-icon" /> {isSidebarOpen && 'Settings'}
+              </button>
+            </>
+          ) : (
+            <>
+              <button className={activeTab === 'rescues' ? 'active' : ''} onClick={() => setActiveTab('rescues')}>
+                <LifeBuoy className="nav-icon" /> {isSidebarOpen && 'Rescues (Users in Trouble)'}
+              </button>
+              <button className={activeTab === 'activity' ? 'active' : ''} onClick={() => setActiveTab('activity')}>
+                <Activity className="nav-icon" /> {isSidebarOpen && 'Activity Network'}
               </button>
             </>
           )}
@@ -1949,16 +1987,16 @@ function App() {
       <main className="main-content">
         {!isAdmin ? (
           <>
-            {activeUserTab === 'dashboard' && renderUserDashboard()}
-            {activeUserTab === 'threatmap' && renderThreatMap()}
-          </>
-        ) : (
-          <>
             {activeTab === 'dashboard' && renderDashboard()}
             {activeTab === 'inventory' && renderInventory()}
             {activeTab === 'team' && renderTeam()}
-            {activeTab === 'activity' && renderActivity()}
+            {activeTab === 'threatmap' && renderThreatMap()}
             {activeTab === 'settings' && renderSettings()}
+          </>
+        ) : (
+          <>
+            {activeTab === 'rescues' && renderRescues()}
+            {activeTab === 'activity' && renderActivity()}
           </>
         )}
       </main>
