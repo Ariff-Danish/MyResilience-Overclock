@@ -1,15 +1,37 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
 from app.routers import emergency
+from app.routers import agent_status
 import os
 from datetime import datetime
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup: launch all autonomous agents. Shutdown: stop them gracefully."""
+    from app.agents.autonomous.orchestrator import orchestrator
+    from app.routers.agent_status import broadcast_to_ws
+
+    # Wire WebSocket broadcaster into orchestrator
+    orchestrator.set_ws_broadcaster(broadcast_to_ws)
+
+    # Start all autonomous agents
+    await orchestrator.start_all()
+
+    yield
+
+    # Graceful shutdown
+    await orchestrator.stop_all()
+
 
 app = FastAPI(
     title="MyResilience — SafeSync AI",
     description="Agentic Disaster Preparedness Guardian — Malaysia's AI-native household emergency command system.",
-    version="2.1.0",
+    version="3.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
 # CORS — allow production frontend + localhost dev
@@ -28,18 +50,27 @@ app.add_middleware(
     allow_headers=["Content-Type", "Accept", "Authorization"],
 )
 
-# Include the emergency router
+# Include routers
 app.include_router(emergency.router, prefix="/api", tags=["emergency"])
+app.include_router(agent_status.router, prefix="/api", tags=["agents"])
+
 
 @app.get("/health")
 async def health_check():
+    from app.agents.autonomous.orchestrator import orchestrator
+    agent_status_data = orchestrator.get_full_status()
     return {
         "status": "operational",
         "service": "MyResilience SafeSync AI",
-        "version": "2.1.0",
+        "version": "3.0.0",
         "timestamp": datetime.utcnow().isoformat() + "Z",
         "environment": os.getenv("VERCEL_ENV", "development"),
+        "agents": {
+            "orchestrator": agent_status_data["orchestrator"]["status"],
+            "managed": agent_status_data["orchestrator"]["agents_managed"],
+        },
     }
+
 
 if __name__ == "__main__":
     import uvicorn

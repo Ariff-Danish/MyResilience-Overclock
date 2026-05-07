@@ -99,6 +99,64 @@ function App() {
   const [locationLoading, setLocationLoading] = useState(false)
   const [locationError, setLocationError] = useState(null)
 
+  // Agent System State
+  const [agentStatus, setAgentStatus] = useState(null)
+  const [agentEvents, setAgentEvents] = useState([])
+  const [agentBriefing, setAgentBriefing] = useState(null)
+  const [wsConnected, setWsConnected] = useState(false)
+  const [briefingLoading, setBriefingLoading] = useState(false)
+  const wsRef = useRef(null)
+  const wsRetryRef = useRef(0)
+
+  // WebSocket connection to agent system
+  useEffect(() => {
+    let ws = null
+    let retryTimeout = null
+    const connect = () => {
+      const wsUrl = API_URL.replace(/^http/, 'ws') + '/api/agents/ws'
+      ws = new WebSocket(wsUrl)
+      wsRef.current = ws
+      ws.onopen = () => {
+        setWsConnected(true)
+        wsRetryRef.current = 0
+      }
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data)
+          if (data.type === 'status_update' || data.agents) {
+            setAgentStatus(data)
+          }
+          if (data.type === 'event' || data.event) {
+            setAgentEvents(prev => [data.event || data, ...prev].slice(0, 50))
+          }
+        } catch {}
+      }
+      ws.onclose = () => {
+        setWsConnected(false)
+        const delay = Math.min(1000 * Math.pow(2, wsRetryRef.current), 30000)
+        wsRetryRef.current++
+        retryTimeout = setTimeout(connect, delay)
+      }
+      ws.onerror = () => {}
+    }
+    connect()
+    return () => {
+      clearTimeout(retryTimeout)
+      if (ws) ws.close()
+    }
+  }, [])
+
+  // Fetch agent events when Agents tab is active
+  useEffect(() => {
+    if (activeTab !== 'agents') return
+    fetch(`${API_URL}/api/agents/events`)
+      .then(r => r.json())
+      .then(data => {
+        if (Array.isArray(data)) setAgentEvents(data.slice(0, 50))
+      })
+      .catch(() => {})
+  }, [activeTab])
+
   useEffect(() => {
     if (settings.locationTracking && !userLocation && !locationError && !locationLoading) {
       if (navigator.geolocation) {
@@ -236,6 +294,18 @@ function App() {
         reasonString || 'Analysis completed.',
         invRes.ok ? 'success' : 'warning'
       )
+
+      // Sync inventory/team to autonomous agents
+      fetch(`${API_URL}/api/agents/configure`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          inventory: inventory,
+          team: team,
+          location_name: settings.location || 'Petaling',
+          demo: demoMode,
+        })
+      }).catch(() => {})
     } catch (err) {
       logEvent('Agent Unreachable', 'Auto Analysis Trigger', ['System'], `Could not connect to backend: ${err.message}.`, 'error')
     } finally {
@@ -1916,6 +1986,167 @@ function App() {
     )
   }
 
+  const renderAgents = () => {
+    const AGENT_META = {
+      sentinel: { emoji: '🛡️', name: 'Sentinel', color: 'var(--primary)' },
+      guardian: { emoji: '📦', name: 'Guardian', color: 'var(--info)' },
+      escalator: { emoji: '⚡', name: 'Escalator', color: 'var(--warning)' },
+      briefing: { emoji: '📋', name: 'Briefing', color: 'var(--cyan)' },
+    }
+
+    const agents = agentStatus?.agents || []
+    const orchestratorStatus = agentStatus?.orchestrator_status || 'unknown'
+
+    const handleGenerateBriefing = async () => {
+      setBriefingLoading(true)
+      try {
+        const res = await fetch(`${API_URL}/api/agents/briefing`, { method: 'POST' })
+        const data = await res.json()
+        setAgentBriefing(data)
+      } catch (err) {
+        setAgentBriefing({ error: err.message })
+      }
+      setBriefingLoading(false)
+    }
+
+    return (
+      <div className="tab-pane animate-fade-in">
+        <div className="tab-header">
+          <h2>🤖 Autonomous Agent System</h2>
+          <p className="tab-subtitle">Real-time monitoring of autonomous resilience agents</p>
+        </div>
+
+        {/* System Overview */}
+        <div className="agent-system-overview">
+          <div className="agent-overview-card">
+            <div className="overview-icon">🧠</div>
+            <div>
+              <div className="overview-label">Orchestrator</div>
+              <div className="overview-value">{orchestratorStatus}</div>
+            </div>
+          </div>
+          <div className="agent-overview-card">
+            <div className="overview-icon">🤖</div>
+            <div>
+              <div className="overview-label">Active Agents</div>
+              <div className="overview-value">{agents.filter(a => a.status === 'active' || a.status === 'scanning').length}/{agents.length}</div>
+            </div>
+          </div>
+          <div className="agent-overview-card">
+            <div className="overview-icon">📡</div>
+            <div>
+              <div className="overview-label">Connection</div>
+              <div className="overview-value">
+                <span className={`ws-status ${wsConnected ? 'connected' : 'disconnected'}`}>
+                  <span className="ws-status-dot" />
+                  {wsConnected ? 'Live' : 'Disconnected'}
+                </span>
+              </div>
+            </div>
+          </div>
+          <div className="agent-overview-card">
+            <div className="overview-icon">📋</div>
+            <div>
+              <div className="overview-label">Briefing</div>
+              <div className="overview-value">
+                <button className="agent-generate-btn" onClick={handleGenerateBriefing} disabled={briefingLoading}>
+                  {briefingLoading ? '⏳ Generating...' : '📋 Generate Briefing'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Agent Status Cards */}
+        {agents.length > 0 ? (
+          <div className="agent-cards-grid">
+            {agents.map((agent, idx) => {
+              const meta = AGENT_META[agent.id] || AGENT_META[agent.name?.toLowerCase()] || { emoji: '🤖', name: agent.name || agent.id, color: 'var(--text-muted)' }
+              const status = agent.status || 'stopped'
+              return (
+                <div key={idx} className={`agent-card status-${status}`}>
+                  <div className="agent-card-header">
+                    <div className="agent-card-name">
+                      <span className="agent-emoji">{meta.emoji}</span>
+                      {meta.name}
+                    </div>
+                    <span className={`agent-card-status ${status}`}>{status}</span>
+                  </div>
+                  <div className="agent-card-metrics">
+                    {agent.details && Object.entries(agent.details).slice(0, 4).map(([key, val]) => (
+                      <div key={key} className="agent-metric">
+                        <span className="agent-metric-label">{key.replace(/_/g, ' ')}</span>
+                        <span className="agent-metric-value">{typeof val === 'object' ? JSON.stringify(val) : String(val)}</span>
+                      </div>
+                    ))}
+                  </div>
+                  {agent.last_heartbeat && (
+                    <div className="agent-heartbeat">
+                      <span className={`agent-status-dot ${status}`} />
+                      Last heartbeat: {new Date(agent.last_heartbeat).toLocaleTimeString()}
+                    </div>
+                  )}
+                  {agent.restart_count > 0 && (
+                    <div className="agent-restart-count">🔄 Restarted {agent.restart_count} time(s)</div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        ) : (
+          <div className="agent-empty-state">
+            <div className="empty-icon">🤖</div>
+            <p>No agent data available</p>
+            <p style={{ fontSize: '0.8rem' }}>Agents will appear here once the backend agent system is running</p>
+          </div>
+        )}
+
+        {/* Latest Briefing */}
+        {agentBriefing && !agentBriefing.error && (
+          <div className="agent-briefing-card">
+            <h3>📋 Latest Briefing</h3>
+            <div className="agent-briefing-content">
+              {agentBriefing.summary || agentBriefing.content || JSON.stringify(agentBriefing, null, 2)}
+            </div>
+            {agentBriefing.generated_at && (
+              <div className="agent-briefing-meta">
+                <span>Generated: {new Date(agentBriefing.generated_at).toLocaleString()}</span>
+                {agentBriefing.threat_level && <span>Threat Level: {agentBriefing.threat_level}</span>}
+              </div>
+            )}
+          </div>
+        )}
+        {agentBriefing?.error && (
+          <div className="agent-briefing-card" style={{ borderLeftColor: 'var(--danger)' }}>
+            <h3 style={{ color: 'var(--danger)' }}>⚠️ Briefing Error</h3>
+            <div className="agent-briefing-content">{agentBriefing.error}</div>
+          </div>
+        )}
+
+        {/* Recent Events Feed */}
+        <div className="agent-events-feed">
+          <h3>📡 Recent Agent Events</h3>
+          {agentEvents.length > 0 ? (
+            agentEvents.map((evt, idx) => (
+              <div key={idx} className="agent-event-item">
+                <span className="agent-event-time">
+                  {evt.timestamp ? new Date(evt.timestamp).toLocaleTimeString() : '--:--'}
+                </span>
+                <span className="agent-event-agent">{evt.agent || evt.agent_name || 'System'}</span>
+                <span className="agent-event-type">{evt.event_type || evt.type || evt.message || 'event'}</span>
+                <span className={`severity-badge ${evt.severity || 'info'}`}>{evt.severity || 'info'}</span>
+              </div>
+            ))
+          ) : (
+            <div className="agent-empty-state" style={{ padding: '1.5rem' }}>
+              <p>No events recorded yet</p>
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="app-container">
       {/* ════════ DISTRESS SIGNAL MODAL ════════ */}
@@ -2074,6 +2305,9 @@ function App() {
           <button className={activeTab === 'activity' ? 'active' : ''} onClick={() => setActiveTab('activity')}>
             <Activity className="nav-icon" /> {isSidebarOpen && 'Activity Network'}
           </button>
+          <button className={activeTab === 'agents' ? 'active' : ''} onClick={() => setActiveTab('agents')}>
+            <span className="nav-icon" style={{display:'inline-flex',alignItems:'center'}}>🤖</span> {isSidebarOpen && 'Agents'}
+          </button>
           <button className={activeTab === 'threatmap' ? 'active' : ''} onClick={() => setActiveTab('threatmap')}>
             <Map className="nav-icon" /> {isSidebarOpen && 'Threat Map'}
           </button>
@@ -2100,6 +2334,7 @@ function App() {
         {activeTab === 'inventory' && renderInventory()}
         {activeTab === 'team' && renderTeam()}
         {activeTab === 'activity' && renderActivity()}
+        {activeTab === 'agents' && renderAgents()}
         {activeTab === 'threatmap' && renderThreatMap()}
         {activeTab === 'survival' && renderSurvivalGuide()}
         {activeTab === 'settings' && renderSettings()}
