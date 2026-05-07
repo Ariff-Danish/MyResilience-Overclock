@@ -1,7 +1,12 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import emergency
+from app.routers import emergency, user_data
 import os
+from app.database import engine
+from app import models
+
+# Create database tables
+models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title="SafeSync AI",
@@ -18,8 +23,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include the emergency router
+# Include routers
 app.include_router(emergency.router, prefix="/api", tags=["emergency"])
+app.include_router(user_data.router, prefix="/api", tags=["data"])
 
 @app.get("/health")
 async def health_check():
