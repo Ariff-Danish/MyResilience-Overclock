@@ -161,7 +161,7 @@ export default function BriefingViewer() {
           }
         } catch { /* ignore */ }
       })
-    }
+    })
 
     es.onerror = () => {
       setIsStreaming(false)
