@@ -287,16 +287,17 @@ function App() {
   // Backend health monitoring
   const [backendOnline, setBackendOnline] = useState(true)
   useEffect(() => {
-    const checkHealth = async () => {
+    const checkHealth = async (timeout = 15000) => {
       try {
-        const r = await fetch(`${API_URL}/health`, { signal: AbortSignal.timeout(5000) })
+        const r = await fetch(`${API_URL}/health`, { signal: AbortSignal.timeout(timeout) })
         setBackendOnline(r.ok)
       } catch {
         setBackendOnline(false)
       }
     }
-    checkHealth()
-    const healthInterval = setInterval(checkHealth, 30000)
+    // First check uses longer timeout (Vercel cold start can take 10-15s)
+    checkHealth(15000)
+    const healthInterval = setInterval(() => checkHealth(8000), 30000)
     return () => clearInterval(healthInterval)
   }, [])
 
@@ -1048,7 +1049,7 @@ function App() {
         }}>
           <span style={{ fontSize: '1rem' }}>⚠️</span>
           <span><strong>AI Backend Offline</strong> — Local data shown. Some features may be limited. Retrying every 30s.</span>
-          <button onClick={() => fetch(`${API_URL}/health`).then(r => setBackendOnline(r.ok)).catch(() => setBackendOnline(false))}
+          <button onClick={() => fetch(`${API_URL}/health`, { signal: AbortSignal.timeout(15000) }).then(r => setBackendOnline(r.ok)).catch(() => setBackendOnline(false))}
             style={{ marginLeft: 'auto', background: 'rgba(244,63,94,0.2)', border: '1px solid rgba(244,63,94,0.4)', color: '#fca5a5', borderRadius: '6px', padding: '0.25rem 0.65rem', cursor: 'pointer', fontSize: '0.75rem', fontWeight: '700' }}>
             Retry ↺
           </button>
