@@ -1,9 +1,8 @@
-import sys
 import os
-from pathlib import Path
+import sys
 
-# bridge for Vercel
-backend_path = Path(__file__).parent.parent / "backend"
-sys.path.append(str(backend_path))
+# Inject the backend folder directly into the front of the Python path
+backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'backend'))
+sys.path.insert(0, backend_dir)
 
 from main import app
