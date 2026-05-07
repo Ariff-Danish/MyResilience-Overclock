@@ -124,6 +124,10 @@ export function AuthProvider({ children }) {
     if (error) throw error
   }, [])
 
+  // Derive app role from user metadata
+  const appRole = user?.user_metadata?.role || user?.app_metadata?.role || 'user'
+  const isAdmin = appRole === 'admin'
+
   const value = {
     user,
     session,
@@ -134,6 +138,8 @@ export function AuthProvider({ children }) {
     signOut,
     resetPassword,
     isAuthenticated: !!user,
+    appRole,
+    isAdmin,
   }
 
   return (

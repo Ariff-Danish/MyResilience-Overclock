@@ -18,13 +18,19 @@ security = HTTPBearer(auto_error=False)
 class AuthUser:
     """Authenticated user context extracted from JWT."""
 
-    def __init__(self, user_id: str, email: str, role: str = "authenticated"):
+    def __init__(self, user_id: str, email: str, role: str = "authenticated", app_role: str = "user"):
         self.id = user_id
         self.email = email
-        self.role = role
+        self.role = role  # Supabase JWT role (authenticated, service_role)
+        self.app_role = app_role  # Application role (user, admin)
+
+    @property
+    def is_admin(self) -> bool:
+        """Check if user has admin application role."""
+        return self.app_role == "admin"
 
     def __repr__(self):
-        return f"AuthUser(id={self.id}, email={self.email})"
+        return f"AuthUser(id={self.id}, email={self.email}, app_role={self.app_role})"
 
 
 def _verify_jwt(token: str) -> dict:
@@ -77,13 +83,18 @@ async def get_current_user(
     email = payload.get("email", "")
     role = payload.get("role", "authenticated")
 
+    # Extract app_role from Supabase user metadata (app_metadata.role or user_metadata.role)
+    app_metadata = payload.get("app_metadata", {})
+    user_metadata = payload.get("user_metadata", {})
+    app_role = app_metadata.get("role") or user_metadata.get("role", "user")
+
     if not user_id:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token missing user ID (sub claim)",
         )
 
-    return AuthUser(user_id=user_id, email=email, role=role)
+    return AuthUser(user_id=user_id, email=email, role=role, app_role=app_role)
 
 
 async def get_optional_user(
@@ -118,16 +129,34 @@ async def get_optional_user(
 async def require_admin(
     user: AuthUser = Depends(get_current_user),
 ) -> AuthUser:
-    """FastAPI dependency: require admin role.
+    """FastAPI dependency: require admin application role.
+
+    Checks both Supabase service_role AND application-level admin role.
+    Admin role is stored in Supabase user_metadata or app_metadata as 'role: admin'.
 
     Usage:
         @router.delete("/admin/resource")
         async def admin_route(user: AuthUser = Depends(require_admin)):
             ...
     """
-    if user.role != "service_role":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access required",
-        )
-    return user
+    # Allow service_role (backend-to-backend) OR app_role=admin
+    if user.role == "service_role" or user.is_admin:
+        return user
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Admin access required. Your account does not have admin privileges.",
+    )
+
+
+async def get_user_role(
+    user: AuthUser = Depends(get_current_user),
+) -> str:
+    """FastAPI dependency: return the user's application role string.
+
+    Usage:
+        @router.get("/role-aware-endpoint")
+        async def endpoint(role: str = Depends(get_user_role)):
+            if role == "admin":
+                ...
+    """
+    return user.app_role

@@ -165,6 +165,21 @@ app.include_router(briefing.router, prefix="/api", tags=["briefing"])
 from app.routers import scan
 app.include_router(scan.router, prefix="/api", tags=["scan"])
 
+# Admin management (admin role required)
+# admin.router has prefix="/admin", so /api/admin/users, /api/admin/stats, etc.
+from app.routers import admin
+app.include_router(admin.router, prefix="/api", tags=["admin"])
+
+# AI Chatbot (authenticated)
+# chatbot.router has prefix="/chatbot", so /api/chatbot/message
+from app.routers import chatbot
+app.include_router(chatbot.router, prefix="/api", tags=["chatbot"])
+
+# Voice command processing (authenticated)
+# voice.router has prefix="/voice", so /api/voice/process
+from app.routers import voice
+app.include_router(voice.router, prefix="/api", tags=["voice"])
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # GLOBAL ENDPOINTS

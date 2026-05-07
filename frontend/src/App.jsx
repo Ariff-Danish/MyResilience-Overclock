@@ -6,6 +6,10 @@ import NotificationToastContainer, { useNotifications } from './components/Notif
 import BriefingViewer from './components/briefing/BriefingViewer'
 import IDScanner from './components/scan/IDScanner'
 import AssetScanner from './components/scan/AssetScanner'
+import ChatbotWidget from './components/chatbot/ChatbotWidget'
+import VoiceCommand from './components/voice/VoiceCommand'
+import AdminDashboard from './components/admin/AdminDashboard'
+import { useAuth } from './lib/AuthContext'
 import './App.css'
 
 // Haversine great-circle distance (km)
@@ -21,6 +25,7 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
 function App() {
   const { toasts, addToast, dismissToast } = useNotifications()
+  const { isAdmin } = useAuth()
   const [activeTab, setActiveTab] = useState('dashboard')
   const [demoMode, setDemoMode] = useState(true)
   const [isSidebarOpen, setSidebarOpen] = useState(true)
@@ -779,6 +784,49 @@ function App() {
     setEditItemData(null)
   }
 
+  // Voice command handlers
+  const handleVoiceAdd = (item) => {
+    const newItem = {
+      ...item,
+      id: Date.now().toString(),
+      expiry_date: '',
+    }
+    setInventory(prev => [newItem, ...prev])
+    saveToDb('inventory', newItem)
+    logEvent('🎤 Voice Add', 'Voice Command', ['Voice Assistant'], `Added ${item.name} (${item.quantity || 1}) via voice`, 'info')
+    addToast(`✅ Added ${item.name} via voice`, 'success')
+  }
+
+  const handleVoiceUpdate = (itemName, quantity) => {
+    const found = inventory.find(i => i.name.toLowerCase().includes(itemName.toLowerCase()))
+    if (found) {
+      const updated = { ...found, current_amount: quantity }
+      setInventory(prev => prev.map(i => i.id === found.id ? updated : i))
+      saveToDb('inventory', updated)
+      logEvent('🎤 Voice Update', 'Voice Command', ['Voice Assistant'], `Updated ${found.name} to ${quantity} via voice`, 'info')
+      addToast(`✅ Updated ${found.name} to ${quantity}`, 'success')
+    } else {
+      addToast(`⚠️ Item "${itemName}" not found in inventory`, 'warning')
+    }
+  }
+
+  const handleVoiceDelete = (itemName) => {
+    const found = inventory.find(i => i.name.toLowerCase().includes(itemName.toLowerCase()))
+    if (found) {
+      setInventory(prev => prev.filter(i => i.id !== found.id))
+      logEvent('🎤 Voice Delete', 'Voice Command', ['Voice Assistant'], `Removed ${found.name} via voice`, 'info')
+      addToast(`🗑️ Removed ${found.name}`, 'success')
+    } else {
+      addToast(`⚠️ Item "${itemName}" not found`, 'warning')
+    }
+  }
+
+  const handleVoiceSearch = (query) => {
+    setFilterMode('all')
+    // The search will be handled by filtering in the render
+    addToast(`🔍 Searching for "${query}"`, 'info')
+  }
+
   const [newMember, setNewMember] = useState({ name: '', age: 0, role: 'family', email: '', phone: '', remarks: '', skills: '', pinned: false })
   const addTeamMember = () => {
     if (!newMember.name) return
@@ -1331,6 +1379,15 @@ function App() {
           </button>
         </div>
       </div>
+
+      {/* Voice Command */}
+      <VoiceCommand
+        inventory={inventory}
+        onAddItem={handleVoiceAdd}
+        onUpdateItem={handleVoiceUpdate}
+        onDeleteItem={handleVoiceDelete}
+        onSearch={handleVoiceSearch}
+      />
 
       {showAddForm && (
         <div className="panel form-panel mb-4" style={{animation:'fadeIn 0.2s ease'}}>
@@ -2473,7 +2530,15 @@ function App() {
         {activeTab === 'threatmap' && renderThreatMap()}
         {activeTab === 'survival' && renderSurvivalGuide()}
         {activeTab === 'settings' && renderSettings()}
+        {activeTab === 'admin' && isAdmin && <AdminDashboard />}
       </main>
+
+      {/* ════════ AI CHATBOT WIDGET (Global) ════════ */}
+      <ChatbotWidget
+        inventory={inventory}
+        threatStatus={recentAlert?.threat_level || liveWeather?.status || 'clear'}
+        readinessScore={inventoryAnalysis?.readiness_score}
+      />
     </div>
   )
 }

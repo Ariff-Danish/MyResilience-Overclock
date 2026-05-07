@@ -51,6 +51,83 @@ class AssetScanResult(BaseModel):
     description: Optional[str] = None
     confidence: Optional[float] = None
     error: Optional[str] = None
+    # Enhanced fields for auto-categorization
+    suggested_inventory_category: Optional[str] = None
+    auto_unit: Optional[str] = None
+    tags: Optional[list] = None
+
+
+class BatchScanResult(BaseModel):
+    """Result from batch scanning multiple items."""
+    items: list[AssetScanResult] = []
+    total_items: int = 0
+    error: Optional[str] = None
+
+
+# ─── Category Mapping ─────────────────────────────────────────────────────────
+
+# Maps AI-detected asset_type/category to valid inventory categories
+CATEGORY_MAP = {
+    # Direct matches
+    "water": "water", "drink": "water", "beverage": "water", "bottled water": "water",
+    "food": "food", "canned food": "food", "snack": "food", "rice": "food",
+    "instant noodle": "food", "cereal": "food", "dry food": "food", "preserved food": "food",
+    "medical": "medical", "medicine": "medical", "first aid": "medical", "bandage": "medical",
+    "antiseptic": "medical", "painkiller": "medical", "health": "medical", "pharmaceutical": "medical",
+    "tools": "tools", "tool": "tools", "multi-tool": "tools", "knife": "tools",
+    "flashlight": "tools", "torch": "tools", "rope": "tools", "axe": "tools",
+    "documents": "documents", "document": "documents", "id": "documents", "passport": "documents",
+    "certificate": "documents", "insurance": "documents", "paper": "documents",
+    "clothing": "clothing", "clothes": "clothing", "shirt": "clothing", "jacket": "clothing",
+    "raincoat": "clothing", "blanket": "clothing", "shoes": "clothing", "gloves": "clothing",
+    "communication": "communication", "radio": "communication", "walkie-talkie": "communication",
+    "phone": "communication", "charger": "communication", "battery": "communication", "power bank": "communication",
+    "lighting": "lighting", "light": "lighting", "lamp": "lighting", "candle": "lighting",
+    "lantern": "lighting", "headlamp": "lighting", "solar light": "lighting",
+    "sanitation": "sanitation", "hygiene": "sanitation", "soap": "sanitation", "toothbrush": "sanitation",
+    "toilet paper": "sanitation", "hand sanitizer": "sanitation", "disinfectant": "sanitation",
+    "towel": "sanitation", "wipes": "sanitation",
+    # Broader category mappings
+    "electronics": "communication", "gadget": "communication", "device": "communication",
+    "furniture": "other", "vehicle": "other", "supply": "other", "gear": "tools",
+    "tent": "clothing", "tarp": "clothing", "sleeping bag": "clothing",
+    "stove": "tools", "cooker": "tools", "pot": "tools", "utensil": "tools",
+    "compass": "tools", "whistle": "tools", "map": "documents",
+    "fire starter": "tools", "match": "tools", "lighter": "tools",
+    "garbage bag": "sanitation", "plastic bag": "sanitation",
+    "mask": "medical", "gloves": "medical", "thermometer": "medical",
+    "antibiotic": "medical", "band-aid": "medical", "gauze": "medical",
+}
+
+# Maps inventory categories to suggested units
+CATEGORY_UNITS = {
+    "water": "liters",
+    "food": "packs",
+    "medical": "items",
+    "tools": "pcs",
+    "documents": "docs",
+    "clothing": "pcs",
+    "communication": "pcs",
+    "lighting": "pcs",
+    "sanitation": "items",
+    "other": "pcs",
+}
+
+
+def _map_to_inventory_category(ai_category: Optional[str], ai_asset_type: Optional[str]) -> str:
+    """Map AI-detected category/type to a valid inventory category."""
+    # Try direct match on category first
+    if ai_category:
+        mapped = CATEGORY_MAP.get(ai_category.lower().strip())
+        if mapped:
+            return mapped
+    # Try asset_type
+    if ai_asset_type:
+        mapped = CATEGORY_MAP.get(ai_asset_type.lower().strip())
+        if mapped:
+            return mapped
+    # Default
+    return "other"
 
 
 # ─── Vision Analysis Helpers ──────────────────────────────────────────────────
@@ -179,6 +256,7 @@ async def scan_asset(
 
     Accepts a JPEG/PNG image of any physical item.
     Extracts: name, type, brand, model, serial number, condition, value, etc.
+    Auto-maps AI-detected categories to valid inventory categories.
     """
     try:
         contents = await image.read()
@@ -187,13 +265,13 @@ async def scan_asset(
 
         image_b64 = base64.b64encode(contents).decode("utf-8")
 
-        system_prompt = """You are an expert inventory analyst and image recognition system.
+        system_prompt = """You are an expert inventory analyst and image recognition system specializing in disaster preparedness inventory.
 Analyze the provided image of a physical item/asset and extract all identifiable information.
 
 Return a JSON object with these fields (use null for any field not identifiable):
 {
   "asset_name": "descriptive name of the item",
-  "asset_type": "category: electronics, medical, food, tool, clothing, supply, furniture, vehicle, other",
+  "asset_type": "one of: water, food, medical, tools, documents, clothing, communication, lighting, sanitation, other",
   "brand": "brand/manufacturer if visible",
   "model": "model number/name if visible",
   "serial_number": "serial number if visible on the item",
@@ -202,21 +280,30 @@ Return a JSON object with these fields (use null for any field not identifiable)
   "estimated_value": "rough estimated value in MYR if assessable",
   "expiry_date": "YYYY-MM-DD if expiry date is visible (food, medicine, etc.)",
   "quantity": 1,
-  "category": "more specific subcategory",
-  "description": "brief description of the item and its apparent purpose",
+  "category": "specific subcategory (e.g., bottled water, canned food, bandage, flashlight, radio)",
+  "description": "brief description of the item and its apparent purpose for disaster preparedness",
+  "tags": ["relevant", "tags", "for", "the", "item"],
   "confidence": 0.0 to 1.0
 }
 
 Important:
+- For asset_type, use EXACTLY one of: water, food, medical, tools, documents, clothing, communication, lighting, sanitation, other
 - Assess condition based on visible wear, damage, rust, stains
 - For food/medicine: look for expiry dates, packaging condition
 - For electronics: look for brand logos, model numbers, screen condition
 - Be conservative with estimated value
+- Include 2-5 relevant tags for the item
 - Return ONLY valid JSON, no markdown or explanation"""
 
         user_prompt = "Analyze this image of an inventory item and extract all identifiable information. Return structured JSON."
 
         result = _analyze_image_with_groq(image_b64, system_prompt, user_prompt)
+
+        # Auto-map category to valid inventory category
+        ai_category = result.get("category")
+        ai_asset_type = result.get("asset_type")
+        suggested_category = _map_to_inventory_category(ai_category, ai_asset_type)
+        auto_unit = CATEGORY_UNITS.get(suggested_category, "pcs")
 
         return AssetScanResult(
             asset_name=result.get("asset_name"),
@@ -232,6 +319,9 @@ Important:
             category=result.get("category"),
             description=result.get("description"),
             confidence=result.get("confidence", 0.0),
+            suggested_inventory_category=suggested_category,
+            auto_unit=auto_unit,
+            tags=result.get("tags", []),
         )
 
     except HTTPException:
@@ -239,3 +329,67 @@ Important:
     except Exception as e:
         logger.error(f"Asset scan failed: {e}")
         return AssetScanResult(error=str(e), confidence=0.0)
+
+
+@router.post("/asset/batch", response_model=BatchScanResult)
+async def scan_asset_batch(
+    images: list[UploadFile] = File(...),
+    user: AuthUser = Depends(get_current_user),
+):
+    """Batch scan multiple inventory asset images.
+
+    Accepts up to 5 JPEG/PNG images and processes each one.
+    Returns structured data for all detected items.
+    """
+    if len(images) > 5:
+        raise HTTPException(status_code=400, detail="Maximum 5 images per batch")
+
+    results = []
+    for image in images:
+        try:
+            contents = await image.read()
+            if len(contents) > 10 * 1024 * 1024:
+                results.append(AssetScanResult(error="Image too large (max 10MB)", confidence=0.0))
+                continue
+
+            image_b64 = base64.b64encode(contents).decode("utf-8")
+
+            system_prompt = """You are an expert inventory analyst. Analyze the image and extract item data.
+Return JSON with: asset_name, asset_type (water/food/medical/tools/documents/clothing/communication/lighting/sanitation/other),
+brand, model, serial_number, condition (new/good/fair/poor/damaged), color, estimated_value (MYR),
+expiry_date (YYYY-MM-DD), quantity, category (specific subcategory), description, tags (array), confidence (0-1).
+Use null for unidentifiable fields. Return ONLY valid JSON."""
+
+            user_prompt = "Analyze this inventory item image. Return structured JSON."
+
+            result = _analyze_image_with_groq(image_b64, system_prompt, user_prompt)
+
+            ai_category = result.get("category")
+            ai_asset_type = result.get("asset_type")
+            suggested_category = _map_to_inventory_category(ai_category, ai_asset_type)
+            auto_unit = CATEGORY_UNITS.get(suggested_category, "pcs")
+
+            results.append(AssetScanResult(
+                asset_name=result.get("asset_name"),
+                asset_type=result.get("asset_type"),
+                brand=result.get("brand"),
+                model=result.get("model"),
+                serial_number=result.get("serial_number"),
+                condition=result.get("condition"),
+                color=result.get("color"),
+                estimated_value=result.get("estimated_value"),
+                expiry_date=result.get("expiry_date"),
+                quantity=result.get("quantity", 1),
+                category=result.get("category"),
+                description=result.get("description"),
+                confidence=result.get("confidence", 0.0),
+                suggested_inventory_category=suggested_category,
+                auto_unit=auto_unit,
+                tags=result.get("tags", []),
+            ))
+
+        except Exception as e:
+            logger.error(f"Batch scan item failed: {e}")
+            results.append(AssetScanResult(error=str(e), confidence=0.0))
+
+    return BatchScanResult(items=results, total_items=len(results))

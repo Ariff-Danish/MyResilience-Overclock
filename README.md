@@ -104,6 +104,78 @@ The system is designed with a strict **Local-First, Privacy-by-Design** security
 | **🗺️ Threat Map** | Leaflet.js live map with proximity shelter routing, SMS copy, and evacuation advisory download |
 | **📡 Activity Network** | Expandable accordion log of every agent run — shows triggers, reasoning, and agent chain |
 | **⚙️ Settings** | Centralised preferences for GPS location tracking and per-category email notification control |
+| **🛡️ Admin Panel** | Role-based admin dashboard with user management, system stats, and health monitoring |
+| **💬 AI Chatbot** | Floating chatbot widget for navigation help, inventory queries, and emergency guidance |
+| **🎙️ Voice Commands** | Voice-controlled inventory management — add, update, search, and delete items by speaking |
+| **📸 Smart Scanner** | AI-powered image recognition with auto-categorization, drag-and-drop, and batch scanning |
+
+---
+
+## 🆕 New Features (Mentor Feedback Implementation)
+
+### 🛡️ Role-Based Access Control (RBAC)
+
+The application now supports two user roles with distinct capabilities:
+
+| Role | Capabilities |
+|---|---|
+| **User** (default) | Standard inventory management, threat monitoring, evacuation planning |
+| **Admin** | All user features + user management, system analytics, role assignment, health monitoring |
+
+**How it works:**
+- Roles are stored in Supabase `user_metadata` (separate from Supabase's built-in JWT role)
+- Admin users see an additional **🛡️ Admin** tab in the sidebar
+- Admin panel provides: user list with role management, system-wide statistics, category breakdown charts, and environment health checks
+- All admin endpoints are protected by `require_admin` middleware
+
+**Admin API Endpoints:**
+- `GET /api/admin/users` — List all users with roles and activity counts
+- `PUT /api/admin/users/{user_id}/role` — Promote/demote user roles
+- `GET /api/admin/stats` — System-wide analytics
+- `GET /api/admin/health` — Detailed system health check
+
+### 💬 AI Chatbot Integration
+
+A floating chatbot widget provides contextual assistance throughout the app:
+
+- **Multi-turn conversations** with full message history
+- **Context-aware responses** — the chatbot receives current inventory, threat status, and readiness score
+- **Quick-action suggestions** — role-aware contextual buttons for common queries
+- **Intent detection** — understands inventory queries, navigation help, emergency guidance, voice command help, and admin assistance
+- **Typing indicators** and auto-scroll for smooth UX
+
+**API Endpoint:**
+- `POST /api/chatbot/message` — Send message with conversation history, get AI response
+- `GET /api/chatbot/suggestions` — Get contextual quick-action suggestions
+
+### 🎙️ Voice Recognition for Inventory Management
+
+Voice-controlled inventory management using the Web Speech API:
+
+- **Supported commands:** "Add 5 bottles of water", "Update rice to 10 packs", "Delete expired medicine", "Search for flashlight"
+- **Smart category mapping** — understands synonyms (e.g., "drink" → water, "medicine" → medical)
+- **Confidence-based execution** — high confidence (≥70%) auto-executes, medium confidence shows confirmation button
+- **Visual feedback** — microphone button with listening wave animation, live transcript display
+- **Quick command hints** — clickable examples for easy onboarding
+
+**API Endpoint:**
+- `POST /api/voice/process` — Parse transcribed voice text into structured inventory action
+- `GET /api/voice/commands` — List supported voice command examples
+
+### 📸 Enhanced Image Recognition
+
+The asset scanner has been significantly enhanced:
+
+- **Auto-categorization** — AI-detected item types are automatically mapped to valid inventory categories (water, food, medical, tools, documents, clothing, communication, lighting, sanitation, other)
+- **Drag-and-drop upload** — drop single or multiple images directly onto the scanner
+- **Batch scanning** — scan up to 5 items simultaneously with individual result cards
+- **Smart unit detection** — automatically suggests appropriate units (liters for water, packs for food, etc.)
+- **Tag extraction** — AI generates relevant tags for each scanned item
+- **Multiple input modes** — Camera capture, file upload, or batch scan
+
+**API Endpoints:**
+- `POST /api/scan/asset` — Single image scan with auto-categorization
+- `POST /api/scan/asset/batch` — Batch scan up to 5 images
 
 ---
 
@@ -184,8 +256,13 @@ Open [http://localhost:5173](http://localhost:5173)
 | Variable | Description | Required | Location |
 |---|---|---|---|
 | `VITE_API_URL` | Override backend URL | No | Frontend `.env` |
+| `VITE_SUPABASE_URL` | Supabase project URL | ✅ Yes | Frontend `.env` |
+| `VITE_SUPABASE_ANON_KEY` | Supabase anonymous key | ✅ Yes | Frontend `.env` |
 | `GROQ_API_KEY` | Your Groq LLM API key | ✅ Yes | Backend `.env` |
 | `GROQ_MODEL` | Set to `llama-3.3-70b-versatile` | ✅ Yes | Backend `.env` |
+| `SUPABASE_URL` | Supabase project URL (backend) | ✅ Yes | Backend `.env` |
+| `SUPABASE_SERVICE_KEY` | Supabase service role key (admin operations) | ✅ Yes | Backend `.env` |
+| `SUPABASE_JWT_SECRET` | Supabase JWT secret for token verification | ✅ Yes | Backend `.env` |
 | `NOTIFICATION_EMAIL` | Email address that receives Advisory alerts | ✅ Yes | Backend `.env` |
 | `GMAIL_USER` / `APP_PASSWORD` | Gmail SMTP credentials | Optional | Backend `.env` |
 | `TWILIO_ACCOUNT_SID` | Twilio Account SID for SMS dispatch | Optional | Backend `.env` |

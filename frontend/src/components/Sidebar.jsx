@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom'
 import {
   Activity, ShieldAlert, PackageSearch, Users, Radar, Map,
-  BookOpen, Settings, User, LogOut, ChevronLeft, Menu
+  BookOpen, Settings, User, LogOut, ChevronLeft, Menu, Shield
 } from 'lucide-react'
 import { useAuth } from '../lib/AuthContext'
 
@@ -17,8 +17,10 @@ const NAV_ITEMS = [
   { id: 'settings', label: 'Settings', icon: Settings },
 ]
 
+const ADMIN_NAV_ITEM = { id: 'admin', label: 'Admin Panel', icon: Shield }
+
 export default function Sidebar({ activeTab, setActiveTab, isOpen, onToggle }) {
-  const { user, isAuthenticated, signOut, supabaseReady } = useAuth()
+  const { user, isAuthenticated, signOut, supabaseReady, isAdmin } = useAuth()
 
   return (
     <aside className={`sidebar ${isOpen ? 'open' : 'closed'}`}>
@@ -44,6 +46,20 @@ export default function Sidebar({ activeTab, setActiveTab, isOpen, onToggle }) {
             {isOpen && item.label}
           </button>
         ))}
+
+        {/* Admin-only navigation */}
+        {isAdmin && (
+          <>
+            <div className="sidebar-divider" />
+            <button
+              className={activeTab === ADMIN_NAV_ITEM.id ? 'active admin-nav' : 'admin-nav'}
+              onClick={() => setActiveTab(ADMIN_NAV_ITEM.id)}
+            >
+              <ADMIN_NAV_ITEM.icon className="nav-icon" />
+              {isOpen && ADMIN_NAV_ITEM.label}
+            </button>
+          </>
+        )}
       </nav>
 
       {/* Auth User Menu */}
