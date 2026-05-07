@@ -46,11 +46,7 @@ class InventoryAnalysisResult(BaseModel):
 
 
 class PACEPlanResult(BaseModel):
-    primary: str
-    alternate: str
-    contingency: str
-    emergency: str
-    reasoning: str
+    survival_guide_markdown: str
 
 
 # ══════════════════════════════════════════════════════════════
@@ -205,39 +201,31 @@ BEHAVIOR:
 - Your reasoning must cite specific values (e.g., '3.3 days water for 2 people, critical flood in 2.5h = immediate.')."""
 
 
-PACE_PROMPT = """ROLE: You are the P.A.C.E. Strategist — a tactical survival planner generating a four-tier contingency doctrine tailored to this specific household. P.A.C.E. = Primary, Alternate, Contingency, Emergency. You do NOT assess threats or calculate survival days. You produce an actionable static doctrine.
+PACE_PROMPT = """ROLE: You are the Survival Guide & P.A.C.E. Strategist. You are tasked with generating a comprehensive, precise, and highly personalized Survival Guide for a household.
 
 TASK:
-1. Assess mobility constraints from team (elderly >65 or children <12 affect evacuation complexity).
-2. Assess available resources from inventory (power backup, water >= 3 days, medical supplies present?).
-3. Generate P.A.C.E. plan — each tier assumes the previous tier has FAILED:
-   - Primary: Optimal action using all available resources and contacts.
-   - Alternate: Second-best option if Primary route or resource is blocked.
-   - Contingency: Degraded fallback when infrastructure fails (no vehicle, no roads).
-   - Emergency: Last-resort survival when all else has failed.
-4. Each tier must be specific to the location and inventory. Reference actual item names or quantities.
-5. Write reasoning explaining the strategic logic behind this specific P.A.C.E. sequence.
+1. Assess mobility constraints from the team composition (elderly >65 or children <12).
+2. Assess available resources from the inventory (power backup, water, medical supplies).
+3. Generate a structured Markdown guide that includes:
+   - **Executive Summary**: 1-2 sentences on their overall readiness.
+   - **P.A.C.E. Doctrine**: Detailed Primary, Alternate, Contingency, and Emergency plans.
+   - **Inventory Directives**: Specific actions based on their current inventory (e.g., "Boil water since reserve is low").
+   - **Personnel Directives**: Specific instructions for team members based on roles or ages.
+4. The instructions must be precise, catered to the user, and formatted beautifully in Markdown.
 
-OUTPUT (STRICT JSON — no markdown, no extra keys):
+OUTPUT (STRICT JSON — no markdown outside the JSON string):
 {
-  "primary": "<1-2 tactical sentences>",
-  "alternate": "<1-2 tactical sentences>",
-  "contingency": "<1-2 tactical sentences>",
-  "emergency": "<1-2 tactical sentences>",
-  "reasoning": "<2-3 sentences explaining why this sequence fits this household>"
+  "survival_guide_markdown": "# Your Personal Survival Guide\\n\\n..."
 }
 
 RULES:
-- Each tier MUST assume the previous has failed — no repeated actions across tiers.
-- Reference specific inventory items (e.g., 'Deploy the 10L water reserve') or team roles.
-- If elderly or children present, Primary must account for slower evacuation.
 - Do NOT generate threat assessments or survival day calculations.
-- Do NOT return markdown or extra text.
+- Use actual item names from the inventory.
+- Ensure the markdown is properly escaped in the JSON string (use \\n for newlines).
 
 BEHAVIOR:
-- Think like a CERT trainer briefing a household on their tailored doctrine.
-- Every sentence must be actionable within 60 seconds of reading it.
-- The plan must be internally consistent (if Primary needs a vehicle, Alternate must not also require one)."""
+- Think like an elite CERT trainer briefing a household on their tailored doctrine.
+- The plan must be internally consistent and highly actionable."""
 
 
 INVENTORY_PROMPT = """ROLE: Inventory Analyst. Audit emergency supply state. Do NOT assess threats or issue evacuation orders.
@@ -565,11 +553,7 @@ async def run_pace_agent(inventory: list, team: list, location: str = "Malaysia"
     except Exception as e:
         print(f"[P.A.C.E. Strategist] Agent failed: {e}")
         return PACEPlanResult(
-            primary="P.A.C.E. plan unavailable. Please retry when the AI service is responsive.",
-            alternate="Fallback: Shelter in place, conserve resources, and monitor official broadcasts.",
-            contingency="Contact emergency services via phone (999) if situation escalates.",
-            emergency="Last resort: Signal for help and move to the nearest evacuation centre.",
-            reasoning="P.A.C.E. agent encountered an error. Default survival guidance provided."
+            survival_guide_markdown="# Survival Guide Unavailable\n\nPlease retry when the AI service is responsive. Fallback actions:\n1. Shelter in place.\n2. Conserve resources.\n3. Call 999 if situation escalates."
         )
 
 
@@ -934,11 +918,7 @@ class PreparednessBriefingResult(BaseModel):
     summary: str
     reasoning: str
     # PACE fields
-    pace_primary: str
-    pace_alternate: str
-    pace_contingency: str
-    pace_emergency: str
-    pace_reasoning: str
+    survival_guide_markdown: str
 
 
 PREPAREDNESS_BRIEFING_PROMPT = """ROLE: You are the Preparedness Briefing Officer — combining inventory audit and P.A.C.E. tactical planning in a single response to save API quota.
@@ -957,15 +937,13 @@ INPUTS: inventory (list of {name, category, unit, current_amount, target_amount,
 10. 1-2 sentence summary of preparedness posture.
 11. reasoning = step-by-step arithmetic for steps 2-5.
 
-PART B — P.A.C.E. PLAN:
-Using the same inventory and team, generate a 4-tier contingency doctrine.
-P.A.C.E. = Primary, Alternate, Contingency, Emergency. Each tier assumes the previous has FAILED.
-- primary: optimal action using all available resources.
-- alternate: second-best if Primary route/resource is blocked.
-- contingency: degraded fallback when infrastructure fails.
-- emergency: last-resort survival when all else has failed.
-- pace_reasoning: 2-3 sentences explaining the strategic logic.
-Reference actual inventory item names/quantities. If elderly >65 or children <12 in team, Primary must account for slower evacuation.
+PART B — SURVIVAL GUIDE (P.A.C.E.):
+Using the same inventory and team, generate a comprehensive Markdown Survival Guide tailored to the household.
+- Include an Executive Summary of their readiness.
+- Provide a detailed 4-tier P.A.C.E. doctrine (Primary, Alternate, Contingency, Emergency). Each tier assumes the previous has FAILED.
+- Provide actionable Inventory Directives referencing actual item names and addressing the critical_gaps/low_stock_items.
+- Provide Personnel Directives for team members based on their roles and ages (e.g., if elderly >65 or children <12, account for slower evacuation).
+- Format beautifully with Markdown headings, bold text, and bullet points.
 
 OUTPUT (STRICT JSON — no markdown):
 {
@@ -979,11 +957,7 @@ OUTPUT (STRICT JSON — no markdown):
   "recommendations": ["<str>", "<str>", "<str>"],
   "summary": "<str>",
   "reasoning": "<str>",
-  "pace_primary": "<1-2 tactical sentences>",
-  "pace_alternate": "<1-2 tactical sentences>",
-  "pace_contingency": "<1-2 tactical sentences>",
-  "pace_emergency": "<1-2 tactical sentences>",
-  "pace_reasoning": "<2-3 sentences>"
+  "survival_guide_markdown": "# Your Survival Guide\\n\\n..."
 }
 
 RULES: recommendations = exactly 3. critical_gaps = category names only. Each PACE tier assumes the previous failed. No markdown."""
@@ -1008,9 +982,78 @@ async def run_preparedness_briefing_agent(
             recommendations=["Retry the analysis", "Check server logs", "Verify inventory data"],
             summary="Preparedness briefing failed. Please retry.",
             reasoning="Agent call failed — likely Groq quota exhaustion.",
-            pace_primary="Retry briefing when AI service is available.",
-            pace_alternate="Shelter in place, conserve resources, monitor official broadcasts.",
-            pace_contingency="Contact emergency services via 999 if situation escalates.",
-            pace_emergency="Signal for help and move to the nearest evacuation centre.",
-            pace_reasoning="Default guidance provided due to agent error."
+            survival_guide_markdown="# Survival Guide Unavailable\n\nPlease retry when the AI service is available.\n\nFallback actions:\n1. Shelter in place.\n2. Conserve resources.\n3. Call 999 if situation escalates."
+        )
+
+# ══════════════════════════════════════════════════════════════
+# NEW: VOICE PARSER AGENT
+# ══════════════════════════════════════════════════════════════
+
+class VoiceParserResult(BaseModel):
+    action: str  # "add_inventory" | "add_team" | "unknown"
+    data: dict
+
+VOICE_PARSER_PROMPT = """ROLE: You are the Voice Command Parser. Your job is to listen to a user's voice transcript and convert it into a structured JSON action.
+
+TASK:
+1. Identify if the user wants to add an inventory item or a team member.
+2. Extract the relevant fields.
+3. If it's inventory, the fields are: name, category (Water, Food, Medical, Security, Shelter, Communication, Power, Tools, Hygiene, Transport, Documents, Misc), unit, current_amount, target_amount.
+4. If it's a team member, the fields are: name, age, role (family, emergency_contact, useful_contact).
+5. If you cannot determine the action or it's nonsensical, set action to "unknown".
+
+OUTPUT (STRICT JSON):
+{
+  "action": "<add_inventory|add_team|unknown>",
+  "data": {
+    // Extracted fields here
+  }
+}
+"""
+
+async def run_voice_parser_agent(transcript: str) -> VoiceParserResult:
+    try:
+        user = f"Transcript: {transcript}"
+        result = await _call_groq(VOICE_PARSER_PROMPT, user, max_tokens=300)
+        return VoiceParserResult(**result)
+    except Exception as e:
+        print(f"[VoiceParser] Agent failed: {e}")
+        return VoiceParserResult(action="unknown", data={})
+
+
+# ══════════════════════════════════════════════════════════════
+# NEW: SOS ASSESSOR AGENT
+# ══════════════════════════════════════════════════════════════
+
+class SOSAssessorResult(BaseModel):
+    threat_level: str  # "critical" | "warning"
+    escalation_reasoning: str
+    suggested_action: str
+
+SOS_ASSESSOR_PROMPT = """ROLE: You are the Emergency SOS Dispatcher. A user has pressed the panic button and provided an emergency transcript.
+
+TASK:
+1. Assess the severity of the user's transcript.
+2. Determine if it's a critical threat (life-threatening, immediate) or a warning (urgent but not immediately life-threatening).
+3. Provide a brief, calm, and actionable suggested response for the user to follow right now.
+
+OUTPUT (STRICT JSON):
+{
+  "threat_level": "<critical|warning>",
+  "escalation_reasoning": "<1 sentence reasoning>",
+  "suggested_action": "<1-2 sentences of immediate action>"
+}
+"""
+
+async def run_sos_assessor_agent(transcript: str) -> SOSAssessorResult:
+    try:
+        user = f"User SOS Message: {transcript}"
+        result = await _call_groq(SOS_ASSESSOR_PROMPT, user, max_tokens=300)
+        return SOSAssessorResult(**result)
+    except Exception as e:
+        print(f"[SOSAssessor] Agent failed: {e}")
+        return SOSAssessorResult(
+            threat_level="critical",
+            escalation_reasoning="System error during SOS assessment, defaulting to critical.",
+            suggested_action="Please contact emergency services (999) immediately."
         )

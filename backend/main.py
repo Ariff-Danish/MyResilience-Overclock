@@ -5,8 +5,11 @@ import os
 from app.database import engine
 from app import models
 
-# Create database tables
-models.Base.metadata.create_all(bind=engine)
+# Create database tables (Safe for Serverless)
+try:
+    models.Base.metadata.create_all(bind=engine)
+except Exception as e:
+    print(f"Warning: Could not initialize database tables on startup: {e}")
 
 app = FastAPI(
     title="SafeSync AI",
@@ -25,7 +28,7 @@ app.add_middleware(
 
 # Include routers
 app.include_router(emergency.router, prefix="/api", tags=["emergency"])
-app.include_router(user_data.router, prefix="/api", tags=["data"])
+app.include_router(user_data.router, prefix="/api/data", tags=["data"])
 
 @app.get("/health")
 async def health_check():

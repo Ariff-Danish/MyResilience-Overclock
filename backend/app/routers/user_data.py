@@ -76,6 +76,12 @@ def clear_inventory(db: Session = Depends(get_db)):
     db.commit()
     return {"status": "success"}
 
+@router.delete("/inventory/{item_id}")
+def delete_inventory_item(item_id: str, db: Session = Depends(get_db)):
+    db.query(models.InventoryItem).filter(models.InventoryItem.id == item_id, models.InventoryItem.user_id == DEFAULT_USER_ID).delete()
+    db.commit()
+    return {"status": "success"}
+
 @router.get("/team", response_model=List[TeamMember])
 def get_team(db: Session = Depends(get_db)):
     return db.query(models.TeamMember).filter(models.TeamMember.user_id == DEFAULT_USER_ID).all()
@@ -98,5 +104,11 @@ def create_team_member(member: TeamMember, db: Session = Depends(get_db)):
 @router.delete("/team")
 def clear_team(db: Session = Depends(get_db)):
     db.query(models.TeamMember).filter(models.TeamMember.user_id == DEFAULT_USER_ID).delete()
+    db.commit()
+    return {"status": "success"}
+
+@router.delete("/team/{member_id}")
+def delete_team_member(member_id: str, db: Session = Depends(get_db)):
+    db.query(models.TeamMember).filter(models.TeamMember.id == member_id, models.TeamMember.user_id == DEFAULT_USER_ID).delete()
     db.commit()
     return {"status": "success"}

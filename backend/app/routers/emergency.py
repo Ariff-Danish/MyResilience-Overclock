@@ -14,6 +14,8 @@ from app.agents.safesync_agents import (
     WeatherAssessmentResult,
     SurvivalResult,
     PreparednessBriefingResult,
+    run_voice_parser_agent,
+    run_sos_assessor_agent,
 )
 from app.agents.sms_tools import send_bulk_sms
 from app.utils.geo import (
@@ -629,5 +631,27 @@ async def evacuation_advisory(req: EvacuationAdvisoryRequest):
             "sms_results": sms_results,
             "resolved_location": location,
         }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+class VoiceCommandRequest(BaseModel):
+    transcript: str
+
+@router.post("/parse_voice_command")
+async def parse_voice_command(req: VoiceCommandRequest):
+    try:
+        result = await run_voice_parser_agent(req.transcript)
+        return result.model_dump()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+class SOSRequest(BaseModel):
+    transcript: str
+
+@router.post("/sos_trigger")
+async def sos_trigger(req: SOSRequest):
+    try:
+        result = await run_sos_assessor_agent(req.transcript)
+        return result.model_dump()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

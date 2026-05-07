@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Activity, ShieldAlert, PackageSearch, Users, Radar, AlertTriangle, ShieldCheck, ChevronDown, ChevronRight, Filter, Menu, ChevronLeft, Map, Phone, Copy, Navigation, FileDown, ChevronUp, Edit2, X, Settings } from 'lucide-react'
+import { Activity, ShieldAlert, PackageSearch, Users, Radar, AlertTriangle, ShieldCheck, ChevronDown, ChevronRight, Filter, Menu, ChevronLeft, Map, Phone, Copy, Navigation, FileDown, ChevronUp, Edit2, X, Settings, Mic, LifeBuoy } from 'lucide-react'
 import { Radar as RechartsRadar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip } from 'recharts'
 import './App.css'
 
@@ -20,6 +20,9 @@ function App() {
   const [demoMode, setDemoMode] = useState(false)
   const [demoScenario, setDemoScenario] = useState(1)
   const [isSidebarOpen, setSidebarOpen] = useState(true)
+  const [isAdmin, setIsAdmin] = useState(false)
+  const [isListening, setIsListening] = useState(false)
+  const [voiceError, setVoiceError] = useState('')
 
   // ── Demo Scenario Presets ──────────────────────────────────────────────────────
   const DEMO_SCENARIOS = [
@@ -578,6 +581,17 @@ function App() {
         const bounds = L.latLngBounds(allMarkers.map(l => [l.lat, l.lng]))
         map.fitBounds(bounds, { padding: [60, 60], maxZoom: 14 })
       }
+
+      // Draw Threat Radius (Color Coded Danger Zone)
+      const severity = recentAlert?.weather_severity || 'warning';
+      const circleColor = severity === 'critical' ? '#ef4444' : '#eab308'; // Red for critical, Yellow for warning
+      L.circle([mapCenter[0], mapCenter[1]], {
+        color: circleColor,
+        fillColor: circleColor,
+        fillOpacity: 0.15,
+        radius: 8000 // 8km radius
+      }).addTo(map)
+        .bindTooltip(`<b>Threat Zone</b><br>Severity: ${severity.toUpperCase()}`, { sticky: true });
     }, 250)
 
     return () => clearTimeout(timer)
@@ -604,6 +618,7 @@ function App() {
             ...data.evacuation_advisory,
             sms_results: data.sms_auto_results || []
           })
+          setActiveTab('threatmap') // Auto-trigger threat map
         }
 
         let reason = `Watcher identified ${alertType}: ${desc}.\n`
@@ -649,6 +664,64 @@ function App() {
     setInventory([item, ...inventory])
     saveToDb('inventory', item)
     setNewItem({ name: '', category: 'Water', unit: 'Units', current_amount: 0, target_amount: 0, expiry_date: '' })
+  }
+
+  const handleVoiceCommand = (type) => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      setVoiceError('Voice recognition not supported in this browser.')
+      setTimeout(() => setVoiceError(''), 3000)
+      return
+    }
+
+    const recognition = new SpeechRecognition()
+    recognition.lang = 'en-US'
+    recognition.interimResults = false
+
+    recognition.onstart = () => {
+      setIsListening(true)
+      setVoiceError('Listening...')
+    }
+
+    recognition.onerror = (event) => {
+      setIsListening(false)
+      setVoiceError('Microphone error: ' + event.error)
+      setTimeout(() => setVoiceError(''), 3000)
+    }
+
+    recognition.onresult = async (event) => {
+      setIsListening(false)
+      setVoiceError('Parsing...')
+      const transcript = event.results[0][0].transcript
+      
+      try {
+        const res = await fetch(`${API}/api/parse_voice_command`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ transcript })
+        })
+        const data = await res.json()
+
+        if (data.action === 'add_inventory' && type === 'inventory') {
+          const item = { ...data.data, id: Date.now().toString() }
+          setInventory(prev => [...prev, item])
+          saveToDb('inventory', item)
+          setVoiceError('Added: ' + item.name)
+        } else if (data.action === 'add_team' && type === 'team') {
+          const member = { ...data.data, id: Date.now().toString() }
+          setTeam(prev => [...prev, member])
+          saveToDb('team', member)
+          setVoiceError('Added: ' + member.name)
+        } else {
+          setVoiceError('Could not understand command.')
+        }
+      } catch (err) {
+        setVoiceError('Failed to parse voice command.')
+      }
+      setTimeout(() => setVoiceError(''), 3000)
+    }
+
+    recognition.start()
   }
 
   const [editingId, setEditingId] = useState(null)
@@ -1152,7 +1225,11 @@ function App() {
           <input type="number" placeholder="Target Qty" value={newItem.target_amount === 0 ? '' : newItem.target_amount} onChange={e => setNewItem({...newItem, target_amount: Number(e.target.value)})} />
           <input type="date" value={newItem.expiry_date} onChange={e => setNewItem({...newItem, expiry_date: e.target.value})} />
           <button className="btn-primary" onClick={addInventoryItem}>Register</button>
+          <button className={`btn-primary ${isListening ? 'listening' : ''}`} onClick={() => handleVoiceCommand('inventory')} title="Hold to Speak">
+            <Mic size={18} />
+          </button>
         </div>
+        {voiceError && <div className="text-yellow" style={{fontSize: '0.8rem', marginTop: '0.5rem'}}>{voiceError}</div>}
       </div>
 
       <div className="filter-row">
@@ -1237,7 +1314,11 @@ function App() {
           <input type="tel" placeholder="Phone" value={newMember.phone} onChange={e => setNewMember({...newMember, phone: e.target.value})} />
           <input placeholder="Remarks (e.g. asthma, wheelchair)" value={newMember.remarks} onChange={e => setNewMember({...newMember, remarks: e.target.value})} />
           <button className="btn-primary" onClick={addTeamMember}>Enlist</button>
+          <button className={`btn-primary ${isListening ? 'listening' : ''}`} onClick={() => handleVoiceCommand('team')} title="Hold to Speak">
+            <Mic size={18} />
+          </button>
         </div>
+        {voiceError && <div className="text-yellow" style={{fontSize: '0.8rem', marginTop: '0.5rem'}}>{voiceError}</div>}
       </div>
 
       <div className="team-grid">
@@ -1289,44 +1370,62 @@ function App() {
     </div>
   )
 
-  const renderActivity = () => (
-    <div className="tab-pane animate-fade-in">
-      <h2>Agent Activity Network</h2>
-      <div className="terminal-panel">
-        {activityEvents.map((ev) => (
-          <div key={ev.id} className={`activity-event type-${ev.type}`}>
-            <div className="event-header" onClick={() => toggleEvent(ev.id)}>
-              <div className="event-title">
-                {ev.expanded ? <ChevronDown className="icon-sm" /> : <ChevronRight className="icon-sm" />}
-                <span className={ev.type === 'error' ? 'text-red' : ev.type === 'success' ? 'text-green' : ''}>
-                  {ev.title}
-                </span>
+  const renderActivity = () => {
+    const infoEvents = activityEvents.filter(ev => ['info', 'success'].includes(ev.type))
+    const warnEvents = activityEvents.filter(ev => ev.type === 'warning')
+    const critEvents = activityEvents.filter(ev => ['error', 'critical'].includes(ev.type))
+
+    const renderColumn = (title, events, colClass) => (
+      <div className={`activity-column ${colClass}`}>
+        <h3 className="column-title" style={{marginBottom: '1rem', borderBottom: '1px solid var(--panel-border)', paddingBottom: '0.5rem'}}>{title}</h3>
+        <div className="terminal-panel" style={{height: '600px', overflowY: 'auto'}}>
+          {events.map((ev) => (
+            <div key={ev.id} className={`activity-event type-${ev.type}`}>
+              <div className="event-header" onClick={() => toggleEvent(ev.id)}>
+                <div className="event-title">
+                  {ev.expanded ? <ChevronDown className="icon-sm" /> : <ChevronRight className="icon-sm" />}
+                  <span className={['error', 'critical'].includes(ev.type) ? 'text-red' : ev.type === 'success' ? 'text-green' : ev.type === 'warning' ? 'text-yellow' : ''}>
+                    {ev.title}
+                  </span>
+                </div>
+                <span className="event-time">{ev.time}</span>
               </div>
-              <span className="event-time">{ev.time}</span>
+              
+              {ev.expanded && (
+                <div className="event-body">
+                  <p><strong>Trigger/Action:</strong> {ev.userAction}</p>
+                  <div>
+                    <strong>Agents Involved: </strong> 
+                    {ev.agentsTriggered?.map(ag => (
+                      <span key={ag} className="agent-trigger-tag">{ag}</span>
+                    ))}
+                  </div>
+                  <div className="reasoning-box">
+                    <strong>Agent Reasoning/Outcome:</strong>
+                    <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit', margin: 0, marginTop: '0.5rem' }}>
+                      {ev.reasoning}
+                    </pre>
+                  </div>
+                </div>
+              )}
             </div>
-            
-            {ev.expanded && (
-              <div className="event-body">
-                <p><strong>Trigger/Action:</strong> {ev.userAction}</p>
-                <div>
-                  <strong>Agents Involved: </strong> 
-                  {ev.agentsTriggered.map(ag => (
-                    <span key={ag} className="agent-trigger-tag">{ag}</span>
-                  ))}
-                </div>
-                <div className="reasoning-box">
-                  <strong>Agent Reasoning/Outcome:</strong>
-                  <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit', margin: 0, marginTop: '0.5rem' }}>
-                    {ev.reasoning}
-                  </pre>
-                </div>
-              </div>
-            )}
-          </div>
-        ))}
+          ))}
+          {events.length === 0 && <p className="text-muted text-center" style={{marginTop: '2rem'}}>No events.</p>}
+        </div>
       </div>
-    </div>
-  )
+    )
+
+    return (
+      <div className="tab-pane animate-fade-in">
+        <h2>Agent Activity Network</h2>
+        <div className="activity-board" style={{display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1.5rem'}}>
+          {renderColumn('Informational', infoEvents, 'col-info')}
+          {renderColumn('Warning', warnEvents, 'col-warn')}
+          {renderColumn('Critical', critEvents, 'col-crit')}
+        </div>
+      </div>
+    )
+  }
 
   // B1 — Shelter detail cards renderer
   const SHELTER_CONTACTS = {
@@ -1641,6 +1740,90 @@ function App() {
     </div>
   )
 
+  const handleSOS = async () => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      const msg = prompt("Describe your emergency:")
+      if(msg) sendSOS(msg)
+      return
+    }
+
+    const recognition = new SpeechRecognition()
+    recognition.lang = 'en-US'
+    recognition.onstart = () => setVoiceError("Listening for SOS...")
+    recognition.onerror = () => {
+      const msg = prompt("Microphone error. Describe your emergency manually:")
+      if(msg) sendSOS(msg)
+    }
+    recognition.onresult = (event) => {
+      setVoiceError("SOS Transmitting...")
+      sendSOS(event.results[0][0].transcript)
+    }
+    recognition.start()
+  }
+
+  const sendSOS = async (transcript) => {
+    try {
+      const res = await fetch(`${API}/api/sos_trigger`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transcript })
+      })
+      const data = await res.json()
+      
+      setIsAdmin(true)
+      setActiveTab('threatmap')
+      setVoiceError('')
+      
+      const event = {
+        id: Date.now().toString(),
+        time: new Date().toLocaleTimeString(),
+        title: 'Emergency Escalation',
+        userAction: 'SOS Triggered',
+        agentsTriggered: ['Assessor', 'Coordinator'],
+        reasoning: `Transcript: "${transcript}"\nSuggested Action: ${data.suggested_action}\nReasoning: ${data.escalation_reasoning}`,
+        expanded: true,
+        type: data.threat_level === 'critical' ? 'critical' : 'warning'
+      }
+      setActivityEvents(prev => [event, ...prev])
+    } catch(err) {
+      alert("SOS failed to send.")
+      setVoiceError('')
+    }
+  }
+
+  const renderUserDashboard = () => (
+    <div className="tab-pane animate-fade-in" style={{textAlign: 'center', maxWidth: '800px', margin: '0 auto', paddingTop: '4rem'}}>
+      <h2 style={{fontSize: '2.5rem', marginBottom: '3rem'}}>SafeSync</h2>
+      
+      <div style={{display: 'flex', justifyContent: 'center', marginBottom: '4rem'}}>
+        <button 
+          className="sos-btn pulse-red"
+          onClick={handleSOS}
+          style={{
+            width: '250px', height: '250px', borderRadius: '50%', 
+            backgroundColor: 'var(--danger)', color: 'white', fontSize: '2rem', 
+            fontWeight: 'bold', border: '8px solid rgba(255, 59, 48, 0.3)', cursor: 'pointer',
+            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+            transition: 'transform 0.2s'
+          }}>
+          <LifeBuoy size={80} style={{marginBottom: '1rem'}} />
+          SOS
+        </button>
+      </div>
+
+      {voiceError && <div className="text-yellow" style={{fontSize: '1.2rem', marginBottom: '2rem'}}>{voiceError}</div>}
+
+      {inventoryAnalysis?.survival_guide_markdown ? (
+        <div className="panel text-left" style={{backgroundColor: 'var(--panel-bg)', padding: '2rem', borderRadius: '12px'}}>
+          <div className="markdown-content" dangerouslySetInnerHTML={{__html: inventoryAnalysis.survival_guide_markdown.replace(/\n/g, '<br/>')}}></div>
+        </div>
+      ) : (
+        <p className="text-muted">Survival Guide currently unavailable. Admin must run Preparedness Audit.</p>
+      )}
+    </div>
+  )
+
   return (
     <div className="app-container">
       <aside className={`sidebar ${isSidebarOpen ? 'open' : 'closed'}`}>
@@ -1650,24 +1833,38 @@ function App() {
         </div>
         
         <nav className="sidebar-nav">
-          <button className={activeTab === 'dashboard' ? 'active' : ''} onClick={() => setActiveTab('dashboard')}>
-            <Radar className="nav-icon" /> {isSidebarOpen && 'Dashboard'}
-          </button>
-          <button className={activeTab === 'inventory' ? 'active' : ''} onClick={() => setActiveTab('inventory')}>
-            <PackageSearch className="nav-icon" /> {isSidebarOpen && 'Inventory'}
-          </button>
-          <button className={activeTab === 'team' ? 'active' : ''} onClick={() => setActiveTab('team')}>
-            <Users className="nav-icon" /> {isSidebarOpen && 'Personnel'}
-          </button>
-          <button className={activeTab === 'activity' ? 'active' : ''} onClick={() => setActiveTab('activity')}>
-            <Activity className="nav-icon" /> {isSidebarOpen && 'Activity Network'}
-          </button>
-          <button className={activeTab === 'threatmap' ? 'active' : ''} onClick={() => setActiveTab('threatmap')}>
-            <Map className="nav-icon" /> {isSidebarOpen && 'Threat Map'}
-          </button>
-          <button className={activeTab === 'settings' ? 'active' : ''} onClick={() => setActiveTab('settings')}>
-            <Settings className="nav-icon" /> {isSidebarOpen && 'Settings'}
-          </button>
+          <div style={{padding: '1rem', borderBottom: '1px solid var(--panel-border)', marginBottom: '1rem', display: 'flex', justifyContent: 'center'}}>
+            <button className="btn-primary" style={{width: '100%', fontSize: '0.8rem', padding: '0.5rem'}} onClick={() => setIsAdmin(!isAdmin)}>
+              {isAdmin ? 'Switch to User View' : 'Switch to Admin View'}
+            </button>
+          </div>
+
+          {!isAdmin ? (
+            <button className="active">
+              <Activity className="nav-icon" /> {isSidebarOpen && 'Survival Dashboard'}
+            </button>
+          ) : (
+            <>
+              <button className={activeTab === 'dashboard' ? 'active' : ''} onClick={() => setActiveTab('dashboard')}>
+                <Radar className="nav-icon" /> {isSidebarOpen && 'Dashboard'}
+              </button>
+              <button className={activeTab === 'inventory' ? 'active' : ''} onClick={() => setActiveTab('inventory')}>
+                <PackageSearch className="nav-icon" /> {isSidebarOpen && 'Inventory'}
+              </button>
+              <button className={activeTab === 'team' ? 'active' : ''} onClick={() => setActiveTab('team')}>
+                <Users className="nav-icon" /> {isSidebarOpen && 'Personnel'}
+              </button>
+              <button className={activeTab === 'activity' ? 'active' : ''} onClick={() => setActiveTab('activity')}>
+                <Activity className="nav-icon" /> {isSidebarOpen && 'Activity Network'}
+              </button>
+              <button className={activeTab === 'threatmap' ? 'active' : ''} onClick={() => setActiveTab('threatmap')}>
+                <Map className="nav-icon" /> {isSidebarOpen && 'Threat Map'}
+              </button>
+              <button className={activeTab === 'settings' ? 'active' : ''} onClick={() => setActiveTab('settings')}>
+                <Settings className="nav-icon" /> {isSidebarOpen && 'Settings'}
+              </button>
+            </>
+          )}
         </nav>
         <button className="sidebar-toggle-btn" onClick={() => setSidebarOpen(!isSidebarOpen)} title={isSidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}>
           {isSidebarOpen ? <ChevronLeft className="nav-icon" /> : <Menu className="nav-icon" />}
@@ -1675,12 +1872,18 @@ function App() {
       </aside>
 
       <main className="main-content">
-        {activeTab === 'dashboard' && renderDashboard()}
-        {activeTab === 'inventory' && renderInventory()}
-        {activeTab === 'team' && renderTeam()}
-        {activeTab === 'activity' && renderActivity()}
-        {activeTab === 'threatmap' && renderThreatMap()}
-        {activeTab === 'settings' && renderSettings()}
+        {!isAdmin ? (
+          renderUserDashboard()
+        ) : (
+          <>
+            {activeTab === 'dashboard' && renderDashboard()}
+            {activeTab === 'inventory' && renderInventory()}
+            {activeTab === 'team' && renderTeam()}
+            {activeTab === 'activity' && renderActivity()}
+            {activeTab === 'threatmap' && renderThreatMap()}
+            {activeTab === 'settings' && renderSettings()}
+          </>
+        )}
       </main>
     </div>
   )
