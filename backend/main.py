@@ -125,9 +125,6 @@ app.add_middleware(CSRFProtectionMiddleware)
 from app.routers import emergency
 app.include_router(emergency.router, prefix="/api", tags=["emergency"])
 
-from app.routers import user_data
-app.include_router(user_data.router, prefix="/api", tags=["data"])
-
 # Autonomous agent monitoring
 # agent_status.router has prefix="/agents", so /api/agents/status, /api/agents/events, etc.
 from app.routers import agent_status
