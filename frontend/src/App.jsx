@@ -107,7 +107,62 @@ function App() {
 
 
 
-  // Persist to localStorage
+  // --- TiDB SYNC LOGIC ---
+  const [dbSyncing, setDbSyncing] = useState(false)
+  useEffect(() => {
+    const fetchInitialData = async () => {
+      try {
+        setDbSyncing(true)
+        const [invRes, teamRes] = await Promise.all([
+          fetch(`${API}/api/data/inventory`),
+          fetch(`${API}/api/data/team`)
+        ])
+        
+        if (invRes.ok && teamRes.ok) {
+          const invData = await invRes.json()
+          const teamData = await teamRes.json()
+          
+          if (invData.length > 0) setInventory(invData)
+          else syncLocalToDb('inventory', inventory) // Seed if empty
+          
+          if (teamData.length > 0) setTeam(teamData)
+          else syncLocalToDb('team', team) // Seed if empty
+        }
+      } catch (err) {
+        console.error('TiDB Sync Error:', err)
+      } finally {
+        setDbSyncing(false)
+      }
+    }
+    fetchInitialData()
+  }, [])
+
+  const syncLocalToDb = async (type, data) => {
+    try {
+      const endpoint = type === 'inventory' ? 'inventory' : 'team'
+      // For each item, post to DB
+      await Promise.all(data.map(item => 
+        fetch(`${API}/api/data/${endpoint}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(item)
+        })
+      ))
+    } catch (err) { console.error(`Failed to seed ${type}:`, err) }
+  }
+
+  const saveToDb = async (type, item) => {
+    try {
+      const endpoint = type === 'inventory' ? 'inventory' : 'team'
+      await fetch(`${API}/api/data/${endpoint}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(item)
+      })
+    } catch (err) { console.error(`Failed to save ${type}:`, err) }
+  }
+
+  // Persist to localStorage (Keep for redundancy)
   useEffect(() => { localStorage.setItem('myresilience_inventory', JSON.stringify(inventory)) }, [inventory])
   useEffect(() => { localStorage.setItem('myresilience_team', JSON.stringify(team)) }, [team])
 
@@ -577,13 +632,22 @@ function App() {
     }
   }
 
+  const deleteFromDb = async (type, id) => {
+    try {
+      const endpoint = type === 'inventory' ? 'inventory' : 'team'
+      await fetch(`${API}/api/data/${endpoint}/${id}`, { method: 'DELETE' })
+    } catch (err) { console.error(`Failed to delete ${type}:`, err) }
+  }
+
   // --- FORMS ---
   const categories = ['Water', 'Food', 'Medical', 'Security', 'Shelter', 'Communication', 'Power', 'Tools', 'Hygiene', 'Transport', 'Documents', 'Misc']
   const [newItem, setNewItem] = useState({ name: '', category: 'Water', unit: 'Units', current_amount: 0, target_amount: 0, expiry_date: '' })
   
   const addInventoryItem = () => {
     if (!newItem.name) return
-    setInventory([{ ...newItem, id: Date.now().toString() }, ...inventory])
+    const item = { ...newItem, id: Date.now().toString() }
+    setInventory([item, ...inventory])
+    saveToDb('inventory', item)
     setNewItem({ name: '', category: 'Water', unit: 'Units', current_amount: 0, target_amount: 0, expiry_date: '' })
   }
 
@@ -597,6 +661,7 @@ function App() {
 
   const saveEdit = () => {
     setInventory(inventory.map(i => i.id === editingId ? editItemData : i))
+    saveToDb('inventory', editItemData)
     setEditingId(null)
     setEditItemData(null)
   }
@@ -609,7 +674,9 @@ function App() {
   const [newMember, setNewMember] = useState({ name: '', age: 0, role: 'family', email: '', phone: '', remarks: '' })
   const addTeamMember = () => {
     if (!newMember.name) return
-    setTeam([...team, { ...newMember, id: Date.now().toString() }])
+    const member = { ...newMember, id: Date.now().toString() }
+    setTeam([...team, member])
+    saveToDb('team', member)
     setNewMember({ name: '', age: 0, role: 'family', email: '', phone: '', remarks: '' })
   }
 
@@ -623,6 +690,7 @@ function App() {
 
   const saveEditMember = () => {
     setTeam(team.map(m => m.id === editingMemberId ? editMemberData : m))
+    saveToDb('team', editMemberData)
     setEditingMemberId(null)
     setEditMemberData(null)
   }
@@ -1132,7 +1200,7 @@ function App() {
                   <button className="icon-btn" onClick={() => startEdit(item)} title="Edit">
                     <Edit2 size={16} />
                   </button>
-                  <button className="icon-btn" onClick={() => setInventory(inventory.filter(i => i.id !== item.id))} title="Delete">
+                  <button className="icon-btn" onClick={() => { setInventory(inventory.filter(i => i.id !== item.id)); deleteFromDb('inventory', item.id); }} title="Delete">
                     <X size={18} />
                   </button>
                 </div>
@@ -1205,7 +1273,7 @@ function App() {
                   <button className="icon-btn" onClick={() => startEditMember(member)} title="Edit">
                     <Edit2 size={16} />
                   </button>
-                  <button className="icon-btn" onClick={() => setTeam(team.filter(i => i.id !== member.id))} title="Delete">
+                  <button className="icon-btn" onClick={() => { setTeam(team.filter(i => i.id !== member.id)); deleteFromDb('team', member.id); }} title="Delete">
                     <X size={18} />
                   </button>
                 </div>
