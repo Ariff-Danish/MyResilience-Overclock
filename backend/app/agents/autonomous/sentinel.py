@@ -76,7 +76,7 @@ class SentinelAgent:
             await asyncio.sleep(self.POLL_INTERVAL_SECONDS)
 
     async def _check_weather(self):
-        """Fetch weather and evaluate threats autonomously."""
+        """Fetch weather and evaluate threats autonomously using multi-source intelligence."""
         update_agent_status(self.AGENT_NAME, "scanning", {
             "location": self._user_location_name,
             "demo": self._demo_mode,
@@ -87,6 +87,39 @@ class SentinelAgent:
 
         raw = await fetch_mock_weather_data(self._demo_mode, self._user_location_name)
         data = json.loads(raw)
+
+        # ── Multi-source intelligence aggregation ────────────────────────
+        try:
+            from app.agents.data_sources import data_aggregator
+
+            intel = await data_aggregator.aggregate_all(
+                location=self._user_location_name,
+                user_lat=self._user_lat or 3.0,
+                user_lng=self._user_lng or 101.5,
+            )
+
+            # Merge aggregated alerts into the weather data alerts
+            combined = intel.get("combined_alerts", [])
+            existing_alerts = data.get("alerts", [])
+            existing_types = {a.get("type", "") for a in existing_alerts}
+
+            for alert in combined:
+                if alert.get("type", "") not in existing_types:
+                    existing_alerts.append(alert)
+
+            data["alerts"] = existing_alerts
+            data["intelligence_summary"] = intel.get("summary", "")
+            data["earthquake_count"] = len(intel.get("earthquakes", []))
+            data["air_quality"] = intel.get("air_quality", {})
+
+            log_event(self.AGENT_NAME, "multi_source_merged", {
+                "combined_alerts": len(combined),
+                "total_alerts": len(existing_alerts),
+                "earthquakes": len(intel.get("earthquakes", [])),
+                "aqi": intel.get("air_quality", {}).get("aqi"),
+            })
+        except Exception as e:
+            log_event(self.AGENT_NAME, "data_aggregation_failed", {"error": str(e)}, severity="warning")
 
         # Proximity filter if GPS available
         nearby_alerts = data.get("alerts", [])

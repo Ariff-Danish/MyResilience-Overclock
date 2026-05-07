@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
-import { Activity, ShieldAlert, PackageSearch, Users, Radar, AlertTriangle, ShieldCheck, ChevronDown, ChevronRight, Filter, Menu, ChevronLeft, Map, Phone, Copy, Navigation, FileDown, ChevronUp, Edit2, X, Settings, BookOpen } from 'lucide-react'
+import { Activity, ShieldAlert, PackageSearch, Users, Radar, AlertTriangle, ShieldCheck, ChevronDown, ChevronRight, Filter, Map, Phone, Copy, Navigation, FileDown, ChevronUp, Edit2, X, Settings, BookOpen } from 'lucide-react'
 import { Radar as RechartsRadar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip } from 'recharts'
+import Sidebar from './components/Sidebar'
+import NotificationToastContainer, { useNotifications } from './components/NotificationToast'
 import './App.css'
 
 // Haversine great-circle distance (km)
@@ -15,6 +17,7 @@ const haversineKm = (lat1, lng1, lat2, lng2) => {
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
 function App() {
+  const { toasts, addToast, dismissToast } = useNotifications()
   const [activeTab, setActiveTab] = useState('dashboard')
   const [demoMode, setDemoMode] = useState(true)
   const [isSidebarOpen, setSidebarOpen] = useState(true)
@@ -399,6 +402,11 @@ function App() {
           if (alertString !== lastAlertHash || demoMode) {
             setLastAlertHash(alertString)
             if (data.alerts && data.alerts.length > 0) {
+              // Show toast for new alerts
+              const alertCount = data.alerts.length
+              const topAlert = data.alerts[0]
+              const severity = alertCount >= 3 ? 'emergency' : alertCount >= 2 ? 'critical' : 'warning'
+              addToast(severity, `${topAlert.type || 'Weather Alert'}`, `${alertCount} active alert(s) detected. ${topAlert.description || ''}`)
               triggerLiveAlert(data.alerts[0].type, data.alerts[0].description)
             } else {
               const distantNote = data.distant_alerts?.length > 0
@@ -834,6 +842,31 @@ function App() {
           </div>
         </div>
       </div>
+
+      {/* ── Threat Level Indicator ── */}
+      {liveWeather?.alerts?.length > 0 ? (
+        <div className={`threat-level-bar ${liveWeather.alerts.length >= 3 ? 'critical' : 'elevated'}`}>
+          <span className="threat-level-icon">{liveWeather.alerts.length >= 3 ? '🔴' : '🟡'}</span>
+          <div className="threat-level-text">
+            <span className="threat-level-label">Threat Level</span>
+            <span className="threat-level-value">
+              {liveWeather.alerts.length >= 3 ? 'CRITICAL — Multiple Active Threats' : 'ELEVATED — Active Warning'}
+            </span>
+          </div>
+          <span className="threat-level-count">{liveWeather.alerts.length} alert{liveWeather.alerts.length > 1 ? 's' : ''}</span>
+        </div>
+      ) : (
+        <div className="threat-level-bar nominal">
+          <span className="threat-level-icon">🟢</span>
+          <div className="threat-level-text">
+            <span className="threat-level-label">Threat Level</span>
+            <span className="threat-level-value">NOMINAL — All Clear</span>
+          </div>
+          {distantAlerts?.length > 0 && (
+            <span className="threat-level-count">{distantAlerts.length} distant</span>
+          )}
+        </div>
+      )}
 
       {/* ── Offline Banner ── */}
       {!backendOnline && (
@@ -2141,6 +2174,9 @@ function App() {
 
   return (
     <div className="app-container">
+      {/* ════════ NOTIFICATION TOASTS ════════ */}
+      <NotificationToastContainer toasts={toasts} onDismiss={dismissToast} />
+
       {/* ════════ DISTRESS SIGNAL MODAL ════════ */}
       {distressModal && (
         <div className="distress-overlay" onClick={() => { if (!distressLoading) { clearInterval(distressCountdownRef.current); setDistressModal(false); setDistressCountdown(5); setDistressReport(null); }}}>
@@ -2278,48 +2314,12 @@ function App() {
         }}
       >🆘</button>
 
-      <aside className={`sidebar ${isSidebarOpen ? 'open' : 'closed'}`}>
-        <div className="sidebar-logo">
-          <ShieldAlert className="logo-icon" />
-          {isSidebarOpen && <h1>MyResilience</h1>}
-        </div>
-
-        <nav className="sidebar-nav">
-          <button className={activeTab === 'dashboard' ? 'active' : ''} onClick={() => setActiveTab('dashboard')}>
-            <Radar className="nav-icon" /> {isSidebarOpen && 'Dashboard'}
-          </button>
-          <button className={activeTab === 'inventory' ? 'active' : ''} onClick={() => setActiveTab('inventory')}>
-            <PackageSearch className="nav-icon" /> {isSidebarOpen && 'Inventory'}
-          </button>
-          <button className={activeTab === 'team' ? 'active' : ''} onClick={() => setActiveTab('team')}>
-            <Users className="nav-icon" /> {isSidebarOpen && 'Personnel'}
-          </button>
-          <button className={activeTab === 'activity' ? 'active' : ''} onClick={() => setActiveTab('activity')}>
-            <Activity className="nav-icon" /> {isSidebarOpen && 'Activity Network'}
-          </button>
-          <button className={activeTab === 'agents' ? 'active' : ''} onClick={() => setActiveTab('agents')}>
-            <span className="nav-icon" style={{display:'inline-flex',alignItems:'center'}}>🤖</span> {isSidebarOpen && 'Agents'}
-          </button>
-          <button className={activeTab === 'threatmap' ? 'active' : ''} onClick={() => setActiveTab('threatmap')}>
-            <Map className="nav-icon" /> {isSidebarOpen && 'Threat Map'}
-          </button>
-          <button className={activeTab === 'survival' ? 'active' : ''} onClick={() => setActiveTab('survival')}>
-            <BookOpen className="nav-icon" /> {isSidebarOpen && 'Survival Guide'}
-          </button>
-          <button className={activeTab === 'settings' ? 'active' : ''} onClick={() => setActiveTab('settings')}>
-            <Settings className="nav-icon" /> {isSidebarOpen && 'Settings'}
-          </button>
-        </nav>
-        {isSidebarOpen && (
-          <div className="sidebar-status">
-            <div className="sidebar-status-dot" />
-            <span>SYSTEM ONLINE</span>
-          </div>
-        )}
-        <button className="sidebar-toggle-btn" onClick={() => setSidebarOpen(!isSidebarOpen)} title={isSidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}>
-          {isSidebarOpen ? <ChevronLeft className="nav-icon" /> : <Menu className="nav-icon" />}
-        </button>
-      </aside>
+      <Sidebar
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        isOpen={isSidebarOpen}
+        onToggle={() => setSidebarOpen(!isSidebarOpen)}
+      />
 
       <main className="main-content">
         {activeTab === 'dashboard' && renderDashboard()}

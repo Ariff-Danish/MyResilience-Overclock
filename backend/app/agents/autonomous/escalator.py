@@ -160,16 +160,39 @@ class EscalationEngine:
                 actions_taken.append("triggered_evacuation_generation")
                 await self._trigger_evacuation(weather)
 
-            # Auto-SMS for emergency
+            # Auto-SMS for emergency (legacy team-based)
             if level == "emergency":
                 sms_sent = await self._send_emergency_sms(score, factors)
                 if sms_sent:
                     actions_taken.append("emergency_sms_sent")
 
-            # Auto-email for critical+
+            # Auto-email for critical+ (legacy team-based)
             email_sent = await self._send_emergency_email(score, factors, level)
             if email_sent:
                 actions_taken.append("emergency_email_sent")
+
+            # ── Personalized alerts to all subscribed users ──────────────
+            try:
+                from app.agents.alert_dispatcher import dispatch_personalized_alerts
+
+                threat_lat = get_shared_state("user_lat")
+                threat_lng = get_shared_state("user_lng")
+                weather_summary = weather.get("summary", "") if weather else ""
+
+                dispatch_stats = await dispatch_personalized_alerts(
+                    level=level,
+                    score=score,
+                    factors=factors,
+                    threat_lat=threat_lat,
+                    threat_lng=threat_lng,
+                    radius_km=150,
+                    weather_summary=weather_summary,
+                    alert_type="weather",
+                )
+                if dispatch_stats.get("email_sent", 0) > 0 or dispatch_stats.get("sms_sent", 0) > 0:
+                    actions_taken.append(f"personalized_alerts_sent:{dispatch_stats['email_sent']}email/{dispatch_stats['sms_sent']}sms/{dispatch_stats['total_users']}users")
+            except Exception as e:
+                log_event(self.AGENT_NAME, "personalized_dispatch_failed", {"error": str(e)}, severity="warning")
 
         elif level == "warning":
             # Log warning, no external action
