@@ -10,5 +10,15 @@
       "src": "/(.*)",
       "dest": "main.py"
     }
+  ],
+  "crons": [
+    {
+      "path": "/api/cron/run-all",
+      "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/cron/briefing",
+      "schedule": "0 0,12 * * *"
+    }
   ]
 }

@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from app.routers import emergency
 from app.routers import agent_status
+from app.routers import cron
 import os
 from datetime import datetime
 
@@ -59,6 +60,7 @@ app.add_middleware(
 # Include routers
 app.include_router(emergency.router, prefix="/api", tags=["emergency"])
 app.include_router(agent_status.router, prefix="/api", tags=["agents"])
+app.include_router(cron.router, prefix="/api", tags=["cron"])
 
 
 @app.get("/health")
