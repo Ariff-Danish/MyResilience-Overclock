@@ -5,7 +5,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11-blue?logo=python)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100-009688?logo=fastapi)](https://fastapi.tiangolo.com)
 [![React](https://img.shields.io/badge/React-18-61DAFB?logo=react)](https://react.dev)
-[![Groq](https://img.shields.io/badge/LLM-Groq%20Llama--3.1-orange)](https://console.groq.com)
+[![Groq](https://img.shields.io/badge/LLM-Groq%20Llama--3.3-orange)](https://console.groq.com)
 [![MET Malaysia](https://img.shields.io/badge/Data-MET%20Malaysia%20API-green)](https://api.data.gov.my)
 
 ---
@@ -21,74 +21,64 @@ Malaysia experiences flash floods, thunderstorms, and haze events year-round —
 ## 🧠 System Overview: End-to-End Flow
 
 ```
-[MET Malaysia API] ──► [Watcher Agent] ──► [Assessor Agent] ──► [Coordinator Agent]
-       │                  (Threat Level)       (Survival Days)       (Dispatch Decision)
-       │                                                                     │
-[Warning API]                                                    [Email / SMS to Contacts]
-       │
-[Inventory Changes] ──► [Inventory Analyst] ──► [P.A.C.E. Strategist] ──► [Dashboard]
+[MET Malaysia API] ──► [ThreatAssessor Agent] ──────────────────────────────►
+                        (Weather + Survival in 1 call)                        │
+                                                                              │
+[Inventory + Team] ──► [PreparednessBriefing Agent] ────────────────────────►│
+                        (Inventory Audit + PACE in 1 call)                    │
+                                                                              ▼
+                                                              [Coordinator Agent]
+                                                              (Playbook: Preparedness
+                                                               / Advisory / Emergency)
+                                                                              │
+                                                              ┌───────────────┘
+                                                              ▼
+                                                   [Email / SMS Dispatch]
+                                                              │
+                                                              ▼
+                                                   [Local JSON Storage]
 ```
 
 ### Input → Processing → Decision → Action
 
 | Stage | Source | What Happens |
 |---|---|---|
-| **Input** | MET Malaysia Forecast + Warning API, User Inventory, Personnel data | Raw data collected on schedule |
-| **Processing** | Watcher, Assessor, Inventory Analyst | Threat classified, survival days calculated, readiness scored |
+| **Input** | MET Malaysia Forecast + Warning API, User Inventory, Personnel data | Raw data collected on schedule or user action |
+| **Processing** | ThreatAssessor, PreparednessBriefing | Threat classified, survival days calculated, readiness scored |
 | **Decision** | Coordinator (Playbook) | Selects: Preparedness / Advisory / Emergency mode |
 | **Action** | Gmail SMTP + Twilio SMS | Emails user (advisory) or emergency contacts (emergency) with optional SMS dispatch |
 
 ---
 
-## 🤖 The Agent Network
+## 🤖 The Agent Network (V2 Optimised)
 
-MyResilience uses **5 specialised AI agents**, each with a clearly scoped role and strict JSON output contract. No agent does another's job.
+MyResilience uses **5 specialised AI agents**, each with a clearly scoped role and strict JSON output contract. No agent does another's job. In V2, we merged several agents to drastically reduce API tokens while maintaining discrete reasoning.
 
-### 1. 🔭 The Watcher *(Meteorologist)*
-- **Trigger:** Every 5 minutes (Warning API) + Daily (Forecast API)
-- **Input:** Raw MET Malaysia weather JSON (Malay + English)
-- **Output:** `{ severity, disaster_type, expected_impact, time_to_impact_hours }`
-- **Intelligence:** Interprets Malay weather terms (`Ribut petir` = Thunderstorm, `Berjerebu` = Haze), detects official government `OFFICIAL WARNING` prefixes, and escalates to `critical` on confirmed government advisories.
+### 1. 🔭 The ThreatAssessor *(Meteorologist + Survival Tactician)*
+- **Trigger:** Real-time weather polling
+- **Input:** Raw MET Malaysia weather JSON (Malay + English) + Inventory + Team Roster
+- **Output:** Weather severity, expected impact, survival score, and evacuation urgency.
+- **Intelligence:** Interprets Malay weather terms, calculates water survival (3L/person/day) and food survival (2 servings/person/day). Applies a **Mobility Override** — if a team member has critical medical remarks (e.g. asthma, wheelchair), urgency is automatically escalated.
 
-### 2. ⚖️ The Assessor *(Survival Tactician)*
-- **Trigger:** After every Watcher run with an active threat
-- **Input:** Watcher output + Inventory + Team roster (including age & medical remarks)
-- **Output:** `{ survival_score_days, evacuation_urgency, missing_critical_items, reasoning }`
-- **Intelligence:** Calculates water survival (3L/person/day) and food survival (2 servings/person/day). Applies a **Mobility Override** — if a team member has critical medical remarks (e.g. asthma, wheelchair), urgency is automatically escalated by one level.
-
-### 3. 📦 The Inventory Analyst *(Preparedness Expert)*
+### 2. 📦 The PreparednessBriefing Agent *(Inventory + PACE)*
 - **Trigger:** Every time inventory or personnel is saved
 - **Input:** Full inventory list + Team
-- **Output:** Readiness score (0–100), survival days, low-stock items, expiring items, critical gaps, 3 prioritised recommendations
-- **Intelligence:** Deducts points from readiness score based on missing categories (Water, Food, Medical, Power, Shelter, Tools), low stock ratios, and expiring items.
+- **Output:** Readiness score (0–100), low-stock items, expiring items, critical gaps, and a Four-tier P.A.C.E. plan `{ primary, alternate, contingency, emergency }`.
+- **Intelligence:** Each tier of the P.A.C.E. plan assumes the previous has failed. References actual inventory items and accounts for mobility constraints of elderly (>65) or children (<12).
 
-### 4. 🗺️ The P.A.C.E. Strategist *(Tactical Planner)*
-- **Trigger:** Alongside Inventory Analyst on every save
-- **Input:** Inventory + Team + Location
-- **Output:** Four-tier plan: `{ primary, alternate, contingency, emergency }`
-- **Intelligence:** Each tier assumes the previous has failed. References actual inventory items and accounts for mobility constraints of elderly (>65) or children (<12).
-
-### 5. 📡 The Coordinator *(Emergency Dispatcher)*
-- **Trigger:** After Assessor or Inventory Analyst completes
+### 3. 📡 The Coordinator *(Emergency Dispatcher)*
+- **Trigger:** After ThreatAssessor or PreparednessBriefing completes
 - **Playbook Modes:**
-  - **PREPAREDNESS** — Low inventory detected. Sends a structured restocking email to the user *(if enabled in Settings)*.
-  - **ADVISORY** — Active non-critical threat. Sends a calm situational briefing to the user *(if enabled in Settings)*.
-  - **EMERGENCY** — Critical threat with low survival days. Sends urgent alert to the user **and** all designated Emergency Contacts via email + SMS *(if enabled in Settings)*.
-- **Output:** Formatted emails using structured templates with dynamic data injection.
+  - **PREPAREDNESS** — Low inventory detected. Sends a structured restocking email.
+  - **ADVISORY** — Active non-critical threat. Sends a calm situational briefing.
+  - **EMERGENCY** — Critical threat with low survival days. Sends urgent alert to the user **and** all designated Emergency Contacts via email + SMS.
 
----
+### 4. 🗺️ The Evacuation Advisor
+- **Trigger:** Active emergency alert in the user's vicinity
+- **Input:** OpenStreetMap (Overpass API) real-time data
+- **Intelligence:** Queries actual shelters, hospitals, and police stations within a 15km radius. Generates contextual evasion routes without hallucinating GPS coordinates.
 
-## 🔀 Agentic Decision Flow (Minimum 3 Steps)
 
-```
-Step 1 — DETECT:   Watcher parses MET API → classifies severity
-Step 2 — ASSESS:   Assessor computes survival window + applies mobility override
-Step 3 — DECIDE:   Coordinator selects Playbook mode (Preparedness/Advisory/Emergency)
-Step 4 — ACT:      Email + optional SMS dispatched autonomously
-Step 5 — LOG:      Activity Network records agent reasoning for full transparency
-```
-
-All steps execute **without user intervention** after initialization.
 
 ---
 
@@ -107,66 +97,13 @@ All steps execute **without user intervention** after initialization.
 
 ---
 
-## ⚙️ Settings & Preferences
+## 💾 Hackathon Mode: Local JSON Storage
 
-The **Settings** tab gives users full control over notification behaviour:
+For the Overclock Hackathon, we bypassed external databases (TiDB/PostgreSQL) to guarantee 100% uptime and zero connection timeouts during the demo.
 
-| Toggle | Description |
-|---|---|
-| 📍 **GPS Location Tracking** | Auto-fetches browser location for proximity-based threat detection. Off by default. |
-| ✉️ **Preparedness Emails** | Allow the agent to send restocking/audit emails when inventory is low. |
-| ✉️ **Advisory Emails** | Allow the agent to send weather briefings when a non-critical threat is detected. |
-| 🚨 **Emergency Emails** | Allow the agent to email emergency contacts during a critical disaster event. |
-
-> All toggles default to **OFF**. Settings are persisted to `localStorage` and passed to the backend on every agent run.
-
----
-
-## 🌍 Real-World Applicability
-
-| Context | Application |
-|---|---|
-| **Residential Households** | Persistent background guardian for families in flood-prone areas |
-| **NGOs & Community Centres** | Mass notification system for community emergency coordinators |
-| **Corporate BCP** | Business continuity preparedness tracker for remote/field teams |
-| **Public Sector** | Integration with Jabatan Bomba or NADMA to extend official alerts with household-level action plans |
-
----
-
-## 📈 Scalability & Practicality
-
-| Factor | Detail |
-|---|---|
-| **Cost** | Free tier: Groq (LPU inference, ~150 req/day free), MET API (free, no key required), Gmail SMTP (free) |
-| **Token Efficiency** | Forecast fetched once daily. Warning API polled every 5 mins. **Change-detection hash** prevents agents from running if weather hasn't changed — saving ~95% of unnecessary LLM calls |
-| **Latency** | Groq Llama-3.1 responses average < 1 second. Full agent chain runs in ~4 seconds |
-| **Scalability** | Backend is stateless FastAPI. Can be containerised (Docker) and horizontally scaled. State can be migrated to PostgreSQL for multi-household support |
-| **Resilience** | Every agent has a fallback default response. Frontend degrades gracefully on 500 errors with last known state retained |
-
----
-
-## 🗂️ Project Structure
-
-```
-V2-AI-Hackathon-Overclock/
-├── backend/
-│   ├── app/
-│   │   ├── agents/
-│   │   │   ├── safesync_agents.py   # All 5 agent prompts + functions
-│   │   │   ├── gmail_tools.py       # SMTP email sender
-│   │   │   ├── sms_tools.py         # Twilio SMS dispatcher
-│   │   │   └── config.py            # Groq client + env loader
-│   │   └── routers/
-│   │       └── emergency.py         # FastAPI routes + MET API integration
-│   ├── main.py                      # FastAPI app entry point
-│   ├── requirements.txt
-│   ├── .env.example                 # ← Copy this to .env and fill values
-│   └── .env                         # ← NOT committed to git
-└── frontend/
-    └── src/
-        ├── App.jsx                  # Main React application (1500+ lines)
-        └── App.css                  # Sovereign Tactical dark-mode design system
-```
+- All state is persisted to **Local JSON files** in `backend/app/data/`.
+- **Mock Authentication** is enabled. Any email/password combination automatically logs you into the persistent "Demo User" account.
+- To **reset** your demo data, simply delete the files in the `backend/app/data/` folder.
 
 ---
 
@@ -191,18 +128,19 @@ cp .env.example .env
 python -m venv venv
 venv\Scripts\activate        # Windows
 pip install -r requirements.txt
-uvicorn main:app --reload --port 8000
+python main.py               # Starts on port 8000
 ```
 
 ### 2. Start Frontend
 
+Open a new terminal:
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
 
-Open [http://localhost:5173](http://localhost:5173)
+Open [http://localhost:5173](http://localhost:5173). Log in with **any** credentials.
 
 ---
 
@@ -211,16 +149,15 @@ Open [http://localhost:5173](http://localhost:5173)
 | Variable | Description | Required |
 |---|---|---|
 | `GROQ_API_KEY` | Your Groq LLM API key | ✅ Yes |
-| `GROQ_MODEL` | Model to use (default: `llama-3.1-8b-instant`) | ✅ Yes |
+| `GROQ_MODEL` | Model to use (default: `llama-3.3-70b-versatile`) | ✅ Yes |
 | `NOTIFICATION_EMAIL` | Email address that receives Advisory alerts | ✅ Yes |
 | `GMAIL_USER` | Gmail address used to send emails | ✅ Yes |
 | `GMAIL_APP_PASSWORD` | 16-character Gmail App Password | ✅ Yes |
 | `TWILIO_ACCOUNT_SID` | Twilio Account SID for SMS dispatch | Optional |
 | `TWILIO_AUTH_TOKEN` | Twilio Auth Token | Optional |
 | `TWILIO_PHONE_NUMBER` | Twilio sender phone number | Optional |
-| `ALLOWED_ORIGINS` | Frontend CORS origins | Optional |
 
-> **Security Note:** Never commit your `.env` file. The `.gitignore` should include `backend/.env`.
+> **Security Note:** Never commit your `.env` file.
 
 ---
 
@@ -230,8 +167,9 @@ Open [http://localhost:5173](http://localhost:5173)
 |---|---|---|
 | MET Malaysia Forecast | `api.data.gov.my/weather/forecast` | Daily (24h) |
 | MET Malaysia Warnings | `api.data.gov.my/weather/warning` | Every 5 minutes |
+| OpenStreetMap Overpass | `overpass-api.de/api/interpreter` | On Demand |
 
-Both APIs are **free and require no API key**. The system filters for the Petaling / Selangor region by default, configurable in `emergency.py`.
+All external APIs are **free and require no API keys**.
 
 ---
 
@@ -241,45 +179,16 @@ Toggle **Live Demo Mode** in the dashboard to simulate a critical flash flood sc
 
 ---
 
----
-
-## 🚀 Deployment (Vercel)
-
-This project is configured for easy deployment as a monorepo on **Vercel**.
-
-### Configuration
-- **Frontend**: React (Vite)
-- **Backend**: FastAPI (Python Serverless)
-- **Routing**: `vercel.json` manages API routing to the serverless function.
-
-### Steps
-1. Push your code to GitHub.
-2. Connect the repository to Vercel.
-3. In **Project Settings > Environment Variables**, add all keys from `.env.example`.
-4. Set the **Build Command** to: `cd frontend && npm install && npm run build`
-5. Set the **Output Directory** to: `frontend/dist`
-6. Deploy. Vercel will automatically detect the `vercel.json` and `api/index.py` for your backend.
-
----
-
 ## 🛡️ Resilience Features
 
 - **Agent-level fallbacks**: Every agent returns a safe default if the LLM call fails
+- **Tiered Model Cascade**: Automatically falls back from Llama 3.3 -> Qwen -> Llama 3.1 if rate limits are hit.
 - **Frontend degradation**: Failed API calls retain last known state and log a warning
-- **No-guess policy**: Watcher returns `null` for unknown impact times instead of fabricating data
-- **Change detection**: Alert hash comparison prevents redundant agent runs
+- **No-guess policy**: ThreatAssessor returns `null` for unknown impact times instead of fabricating data
 - **Privacy by default**: All location and notification features are OFF by default; user opts in explicitly
 
 ---
 
-Developed for the **V2 AI Hackathon**.
-
----
-
-## 👥 Team
-
-Built for the **Overclock AI Hackathon 2026** — *Agentic AI Track*
-
----
+Developed for the **Overclock AI Hackathon 2026** — *Agentic AI Track*.
 
 *Stay prepared. MyResilience is always watching.*
