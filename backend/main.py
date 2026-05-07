@@ -207,14 +207,14 @@ async def health_check():
         supabase_url = os.getenv("SUPABASE_URL", "")
         supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
         if supabase_url and supabase_key:
-            import httpx
-            resp = httpx.get(
+            import requests as req_lib
+            resp = req_lib.get(
                 f"{supabase_url}/rest/v1/profiles?select=id&limit=1",
                 headers={
                     "apikey": supabase_key,
                     "Authorization": f"Bearer {supabase_key}",
                 },
-                timeout=5.0,
+                timeout=5,
             )
             if resp.status_code == 200:
                 db_status = "connected"
@@ -223,7 +223,7 @@ async def health_check():
         else:
             db_status = "not_configured"
     except Exception as e:
-        db_status = f"error: {str(e)[:100]}"
+        db_status = f"error: {type(e).__name__}: {str(e)[:80]}"
 
     return {
         "status": "operational",
