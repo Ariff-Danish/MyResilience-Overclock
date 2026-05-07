@@ -188,15 +188,17 @@ app.include_router(voice.router, prefix="/api", tags=["voice"])
 @app.get("/health")
 async def health_check():
     """System health check — returns agent status and environment info."""
-    agent_info = {"status": "serverless", "agents_managed": 0}
-
-    if not IS_SERVERLESS:
+    if IS_SERVERLESS:
+        # Serverless: agents run via cron, report the 4 managed agents
+        agent_info = {"status": "cron-managed", "agents_managed": 4}
+    else:
+        agent_info = {"status": "initializing", "agents_managed": 0}
         try:
             from app.agents.autonomous.orchestrator import orchestrator
             agent_status_data = orchestrator.get_full_status()
             agent_info = {
-                "orchestrator": agent_status_data["orchestrator"]["status"],
-                "managed": agent_status_data["orchestrator"]["agents_managed"],
+                "status": agent_status_data["orchestrator"]["status"],
+                "agents_managed": agent_status_data["orchestrator"]["agents_managed"],
             }
         except Exception:
             pass
