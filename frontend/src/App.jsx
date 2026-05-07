@@ -748,25 +748,6 @@ function App() {
 
   const saveEditMember = () => {
     setTeam(team.map(m => m.id === editingMemberId ? editMemberData : m))
-    setEditingMemberId(null)
-    setEditMemberData(null)
-  }
-
-  const cancelEditMember = () => {
-    setEditingMemberId(null)
-    setEditMemberData(null)
-  }
-
-  const [editingMemberId, setEditingMemberId] = useState(null)
-  const [editMemberData, setEditMemberData] = useState(null)
-
-  const startEditMember = (member) => {
-    setEditingMemberId(member.id)
-    setEditMemberData({ ...member })
-  }
-
-  const saveEditMember = () => {
-    setTeam(team.map(m => m.id === editingMemberId ? editMemberData : m))
     saveToDb('team', editMemberData)
     setEditingMemberId(null)
     setEditMemberData(null)
