@@ -3,6 +3,9 @@ import { Activity, ShieldAlert, PackageSearch, Users, Radar, AlertTriangle, Shie
 import { Radar as RechartsRadar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip } from 'recharts'
 import Sidebar from './components/Sidebar'
 import NotificationToastContainer, { useNotifications } from './components/NotificationToast'
+import BriefingViewer from './components/briefing/BriefingViewer'
+import IDScanner from './components/scan/IDScanner'
+import AssetScanner from './components/scan/AssetScanner'
 import './App.css'
 
 // Haversine great-circle distance (km)
@@ -160,6 +163,55 @@ function App() {
   const [agentBriefing, setAgentBriefing] = useState(null)
   const [agentConnected, setAgentConnected] = useState(false)
   const [briefingLoading, setBriefingLoading] = useState(false)
+
+  // Scanner State
+  const [showIDScanner, setShowIDScanner] = useState(false)
+  const [showAssetScanner, setShowAssetScanner] = useState(false)
+
+  // Handle ID scan result — add to team
+  const handleIDScanResult = (result) => {
+    setShowIDScanner(false)
+    if (result.full_name) {
+      const newMember = {
+        id: Date.now().toString(),
+        name: result.full_name,
+        age: null,
+        role: 'family',
+        email: '',
+        phone: '',
+        id_number: result.id_number || '',
+        id_type: result.id_type || '',
+      }
+      setTeam(prev => [...prev, newMember])
+      logEvent('🪪 ID Scanned', 'Camera OCR', ['ID Scanner'], `Added ${result.full_name} (${result.id_type || 'ID'}) via camera scan`, 'info')
+      addToast(`✅ Added ${result.full_name} from ID scan`, 'success')
+    }
+  }
+
+  // Handle asset scan result — add to inventory
+  const handleAssetScanResult = (result) => {
+    setShowAssetScanner(false)
+    if (result.asset_name) {
+      const newItem = {
+        id: Date.now().toString(),
+        name: result.asset_name,
+        category: result.asset_type || result.category || 'other',
+        current_amount: result.quantity || 1,
+        target_amount: result.quantity || 1,
+        unit: 'pcs',
+        expiry_date: result.expiry_date || '',
+        notes: result.description || '',
+        brand: result.brand || '',
+        model: result.model || '',
+        serial_number: result.serial_number || '',
+        condition: result.condition || '',
+        estimated_value: result.estimated_value || '',
+      }
+      setInventory(prev => [...prev, newItem])
+      logEvent('📦 Asset Scanned', 'Camera Recognition', ['Asset Scanner'], `Added ${result.asset_name} (${result.asset_type || 'item'}) via camera scan`, 'info')
+      addToast(`✅ Added ${result.asset_name} to inventory`, 'success')
+    }
+  }
 
   // REST polling for agent status (works on Vercel serverless — no WebSocket needed)
   useEffect(() => {
@@ -1262,13 +1314,22 @@ function App() {
     <div className="tab-pane animate-fade-in">
       <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'1rem', flexWrap:'wrap', gap:'0.75rem'}}>
         <h2 style={{margin:0}}>Asset Inventory</h2>
-        <button
-          className={`btn-primary`}
-          style={{fontSize:'0.85rem', padding:'0.4rem 1rem', background: showAddForm ? 'var(--panel-border)' : undefined}}
-          onClick={() => setShowAddForm(p => !p)}
-        >
-          {showAddForm ? '✕ Close' : '+ Add Asset'}
-        </button>
+        <div style={{display:'flex', gap:'0.5rem'}}>
+          <button
+            className="btn-primary"
+            style={{fontSize:'0.85rem', padding:'0.4rem 1rem', background:'linear-gradient(135deg, #8b5cf6, #06b6d4)'}}
+            onClick={() => setShowAssetScanner(true)}
+          >
+            📷 Scan Asset
+          </button>
+          <button
+            className={`btn-primary`}
+            style={{fontSize:'0.85rem', padding:'0.4rem 1rem', background: showAddForm ? 'var(--panel-border)' : undefined}}
+            onClick={() => setShowAddForm(p => !p)}
+          >
+            {showAddForm ? '✕ Close' : '+ Add Asset'}
+          </button>
+        </div>
       </div>
 
       {showAddForm && (
@@ -1408,13 +1469,22 @@ function App() {
     <div className="tab-pane animate-fade-in">
       <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'1rem', flexWrap:'wrap', gap:'0.75rem'}}>
         <h2 style={{margin:0}}>Personnel & Comms</h2>
-        <button
-          className="btn-primary"
-          style={{fontSize:'0.85rem', padding:'0.4rem 1rem', background: showAddMember ? 'var(--panel-border)' : undefined}}
-          onClick={() => setShowAddMember(p => !p)}
-        >
-          {showAddMember ? '\u2715 Close' : '+ Add Personnel'}
-        </button>
+        <div style={{display:'flex', gap:'0.5rem'}}>
+          <button
+            className="btn-primary"
+            style={{fontSize:'0.85rem', padding:'0.4rem 1rem', background:'linear-gradient(135deg, #f59e0b, #ef4444)'}}
+            onClick={() => setShowIDScanner(true)}
+          >
+            🪪 Scan ID
+          </button>
+          <button
+            className="btn-primary"
+            style={{fontSize:'0.85rem', padding:'0.4rem 1rem', background: showAddMember ? 'var(--panel-border)' : undefined}}
+            onClick={() => setShowAddMember(p => !p)}
+          >
+            {showAddMember ? '\u2715 Close' : '+ Add Personnel'}
+          </button>
+        </div>
       </div>
 
       {showAddMember && (
@@ -2372,6 +2442,20 @@ function App() {
         }}
       >🆘</button>
 
+      {/* ════════ SCANNER MODALS ════════ */}
+      {showIDScanner && (
+        <IDScanner
+          onResult={handleIDScanResult}
+          onClose={() => setShowIDScanner(false)}
+        />
+      )}
+      {showAssetScanner && (
+        <AssetScanner
+          onResult={handleAssetScanResult}
+          onClose={() => setShowAssetScanner(false)}
+        />
+      )}
+
       <Sidebar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
@@ -2385,6 +2469,7 @@ function App() {
         {activeTab === 'team' && renderTeam()}
         {activeTab === 'activity' && renderActivity()}
         {activeTab === 'agents' && renderAgents()}
+        {activeTab === 'briefing' && <BriefingViewer />}
         {activeTab === 'threatmap' && renderThreatMap()}
         {activeTab === 'survival' && renderSurvivalGuide()}
         {activeTab === 'settings' && renderSettings()}

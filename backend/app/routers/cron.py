@@ -105,6 +105,65 @@ async def cron_briefing(request: Request):
         return {"agent": "briefing", "status": "error", "error": str(e)}
 
 
+@router.get("/auto-briefing")
+async def cron_auto_briefing(request: Request):
+    """Run full automated briefing via orchestrator — zero-touch execution.
+
+    This is the primary cron endpoint for the automated briefing system.
+    It runs health checks, executes all agents with retry logic,
+    generates the briefing, and delivers to all subscribers.
+    """
+    _verify_cron(request)
+
+    from app.agents.briefing_orchestrator import briefing_orchestrator
+    from app.agents.autonomous.state import log_event
+    from datetime import timezone, timedelta
+
+    MYT = timezone(timedelta(hours=8))
+    now = datetime.now(MYT)
+    briefing_type = "morning" if now.hour < 14 else "evening"
+
+    try:
+        log_event("orchestrator", "auto_briefing_triggered", {
+            "type": briefing_type,
+            "trigger": "cron",
+        })
+
+        session = await briefing_orchestrator.execute_briefing(
+            briefing_type=briefing_type,
+            timeout=30,
+            max_retries=3,
+        )
+
+        log_event("orchestrator", "auto_briefing_completed", {
+            "session_id": session["id"],
+            "status": session["status"],
+            "agents_succeeded": session.get("agents_succeeded", []),
+            "agents_failed": session.get("agents_failed", []),
+        })
+
+        return {
+            "status": session["status"],
+            "session_id": session["id"],
+            "briefing_type": briefing_type,
+            "agents_succeeded": session.get("agents_succeeded", []),
+            "agents_failed": session.get("agents_failed", []),
+            "agents_skipped": session.get("agents_skipped", []),
+            "duration_ms": session.get("duration_ms"),
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+        }
+    except Exception as e:
+        log_event("orchestrator", "auto_briefing_error", {
+            "error": str(e),
+            "type": briefing_type,
+        }, severity="critical")
+        return {
+            "status": "error",
+            "error": str(e),
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+        }
+
+
 @router.get("/health")
 async def cron_health(request: Request):
     """Run health check — verify all agents are responsive."""

@@ -155,6 +155,16 @@ app.include_router(inventory_db.router, prefix="/api", tags=["inventory"])
 from app.routers import alerts
 app.include_router(alerts.router, prefix="/api", tags=["alerts"])
 
+# Automated briefing system (authenticated)
+# briefing.router has prefix="/briefing", so /api/briefing
+from app.routers import briefing
+app.include_router(briefing.router, prefix="/api", tags=["briefing"])
+
+# OCR ID scanning & asset recognition (authenticated)
+# scan.router has prefix="/scan", so /api/scan/id, /api/scan/asset
+from app.routers import scan
+app.include_router(scan.router, prefix="/api", tags=["scan"])
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # GLOBAL ENDPOINTS

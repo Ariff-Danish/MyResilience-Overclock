@@ -11,6 +11,7 @@ const NAV_ITEMS = [
   { id: 'team', label: 'Personnel', icon: Users },
   { id: 'activity', label: 'Activity Network', icon: Activity },
   { id: 'agents', label: 'Agents', icon: null, emoji: '🤖' },
+  { id: 'briefing', label: 'Briefing', icon: null, emoji: '📋' },
   { id: 'threatmap', label: 'Threat Map', icon: Map },
   { id: 'survival', label: 'Survival Guide', icon: BookOpen },
   { id: 'settings', label: 'Settings', icon: Settings },
