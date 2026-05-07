@@ -6,23 +6,29 @@ from app.routers import agent_status
 import os
 from datetime import datetime
 
+# Detect serverless environment (Vercel, AWS Lambda, etc.)
+IS_SERVERLESS = bool(os.getenv("VERCEL") or os.getenv("AWS_LAMBDA_FUNCTION_NAME"))
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup: launch all autonomous agents. Shutdown: stop them gracefully."""
-    from app.agents.autonomous.orchestrator import orchestrator
-    from app.routers.agent_status import broadcast_to_ws
+    """Startup: launch agents in long-running mode. Skip in serverless."""
+    if not IS_SERVERLESS:
+        from app.agents.autonomous.orchestrator import orchestrator
+        from app.routers.agent_status import broadcast_to_ws
 
-    # Wire WebSocket broadcaster into orchestrator
-    orchestrator.set_ws_broadcaster(broadcast_to_ws)
+        # Wire WebSocket broadcaster into orchestrator
+        orchestrator.set_ws_broadcaster(broadcast_to_ws)
 
-    # Start all autonomous agents
-    await orchestrator.start_all()
+        # Start all autonomous agents (only in long-running server)
+        await orchestrator.start_all()
 
     yield
 
-    # Graceful shutdown
-    await orchestrator.stop_all()
+    if not IS_SERVERLESS:
+        from app.agents.autonomous.orchestrator import orchestrator
+        # Graceful shutdown
+        await orchestrator.stop_all()
 
 
 app = FastAPI(

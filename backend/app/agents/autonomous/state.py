@@ -2,6 +2,9 @@
 
 Stores agent state, decisions, and event history in JSON files.
 All state is additive — never overwrites, always appends.
+
+On Vercel/serverless: uses /tmp (ephemeral, per-invocation).
+On local/standalone: uses agent_state/ alongside the backend.
 """
 import json
 import os
@@ -10,17 +13,37 @@ from pathlib import Path
 from typing import Any, Optional
 from datetime import datetime
 
-# State directory — lives alongside the backend
-STATE_DIR = Path(__file__).parent.parent.parent.parent / "agent_state"
-STATE_DIR.mkdir(exist_ok=True)
+# Detect serverless environment
+IS_SERVERLESS = bool(os.getenv("VERCEL") or os.getenv("AWS_LAMBDA_FUNCTION_NAME"))
 
-# Sub-directories for different state types
+# State directory — /tmp on serverless, local dir on standalone
+if IS_SERVERLESS:
+    STATE_DIR = Path("/tmp/agent_state")
+else:
+    STATE_DIR = Path(__file__).parent.parent.parent.parent / "agent_state"
+
+# Lazy directory creation — only create when actually needed
+_dirs_created = False
+
+
+def _ensure_dirs():
+    """Create state directories on first use."""
+    global _dirs_created
+    if _dirs_created:
+        return
+    _dirs_created = True
+    try:
+        STATE_DIR.mkdir(exist_ok=True)
+        (STATE_DIR / "events").mkdir(exist_ok=True)
+        (STATE_DIR / "decisions").mkdir(exist_ok=True)
+        (STATE_DIR / "snapshots").mkdir(exist_ok=True)
+    except OSError:
+        pass  # Read-only filesystem — state will be in-memory only
+
+
 EVENTS_DIR = STATE_DIR / "events"
 DECISIONS_DIR = STATE_DIR / "decisions"
 SNAPSHOTS_DIR = STATE_DIR / "snapshots"
-EVENTS_DIR.mkdir(exist_ok=True)
-DECISIONS_DIR.mkdir(exist_ok=True)
-SNAPSHOTS_DIR.mkdir(exist_ok=True)
 
 
 def _timestamp() -> str:
@@ -37,9 +60,14 @@ def _read_json(path: Path) -> Any:
 
 def _write_json(path: Path, data: Any) -> None:
     """Atomic write — write to temp then rename."""
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
-    tmp.replace(path)
+    _ensure_dirs()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
+        tmp.replace(path)
+    except OSError:
+        pass  # Read-only filesystem — skip persistence
 
 
 # ── Event Log (append-only) ──────────────────────────────────────────────────
@@ -54,9 +82,13 @@ def log_event(agent: str, event_type: str, payload: dict, severity: str = "info"
         "severity": severity,
         "payload": payload,
     }
-    log_file = EVENTS_DIR / f"{datetime.utcnow().strftime('%Y-%m-%d')}.jsonl"
-    with open(log_file, "a", encoding="utf-8") as f:
-        f.write(json.dumps(event, ensure_ascii=False, default=str) + "\n")
+    _ensure_dirs()
+    try:
+        log_file = EVENTS_DIR / f"{datetime.utcnow().strftime('%Y-%m-%d')}.jsonl"
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps(event, ensure_ascii=False, default=str) + "\n")
+    except OSError:
+        pass  # Read-only filesystem — skip persistence
     return event
 
 
@@ -152,9 +184,13 @@ def log_escalation(agent: str, level: str, action: str, context: dict) -> dict:
         "action": action,
         "context": context,
     }
-    path = DECISIONS_DIR / "escalation_history.jsonl"
-    with open(path, "a", encoding="utf-8") as f:
-        f.write(json.dumps(escalation, ensure_ascii=False, default=str) + "\n")
+    _ensure_dirs()
+    try:
+        path = DECISIONS_DIR / "escalation_history.jsonl"
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(escalation, ensure_ascii=False, default=str) + "\n")
+    except OSError:
+        pass  # Read-only filesystem — skip persistence
     log_event(agent, "escalation", escalation, severity=level)
     return escalation
 
