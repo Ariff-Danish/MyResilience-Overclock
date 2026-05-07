@@ -656,40 +656,7 @@ async def sos_trigger(req: SOSRequest):
         return result.model_dump()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-            "analysis": {
-                "survival_days_water":  b["survival_days_water"],
-                "survival_days_food":   b["survival_days_food"],
-                "overall_days":         b["overall_days"],
-                "readiness_score":      b["readiness_score"],
-                "low_stock_items":      b["low_stock_items"],
-                "expiring_soon_items":  b["expiring_soon_items"],
-                "critical_gaps":        b["critical_gaps"],
-                "recommendations":      b["recommendations"],
-                "summary":              b["summary"],
-                "reasoning":            b["reasoning"],
-            },
-            "pace": {
-                "primary":     b["pace_primary"],
-                "alternate":   b["pace_alternate"],
-                "contingency": b["pace_contingency"],
-                "emergency":   b["pace_emergency"],
-                "reasoning":   b["pace_reasoning"],
-            },
-            # Legacy: coordinator_message kept for backward compatibility
-            "coordinator_message": b["summary"],
-        }
-        
-        if req.settings and req.settings.emailPreparedness:
-            from app.agents.safesync_agents import InventoryAnalysisResult
-            ia_data = {k: b[k] for k in InventoryAnalysisResult.model_fields.keys() if k in b}
-            ia = InventoryAnalysisResult(**ia_data)
-            asyncio.create_task(run_coordinator_agent(
-                inventory_analysis=ia, team=req.team, location=req.location or "Malaysia", settings_pref=req.settings
-            ))
-            
-        return response_data
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+
 
 
 @router.post("/evaluate_risk")
