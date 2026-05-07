@@ -37,7 +37,7 @@ export async function initSupabase() {
 
   // Otherwise, fetch from backend config endpoint
   try {
-    const API_URL = import.meta.env.VITE_API_URL || 'https://myresilience-overclock-api.vercel.app'
+    const API_URL = import.meta.env.VITE_API_URL || 'https://backend-delta-ivory-13.vercel.app'
     const res = await fetch(`${API_URL}/api/config`)
     const config = await res.json()
 

@@ -21,7 +21,7 @@ const haversineKm = (lat1, lng1, lat2, lng2) => {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
 }
 
-const API_URL = import.meta.env.VITE_API_URL || 'https://myresilience-overclock-api.vercel.app'
+const API_URL = import.meta.env.VITE_API_URL || 'https://backend-delta-ivory-13.vercel.app'
 
 function App() {
   const { toasts, addToast, dismissToast } = useNotifications()

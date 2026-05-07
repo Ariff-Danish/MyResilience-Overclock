@@ -2,7 +2,7 @@ import { useState } from 'react'
 import CameraCapture from './CameraCapture'
 import { authenticatedFetch } from '../../lib/api'
 
-const API_URL = import.meta.env.VITE_API_URL || 'https://myresilience-overclock-api.vercel.app'
+const API_URL = import.meta.env.VITE_API_URL || 'https://backend-delta-ivory-13.vercel.app'
 
 /**
  * IDScanner — Camera-based ID card scanner with OCR extraction.

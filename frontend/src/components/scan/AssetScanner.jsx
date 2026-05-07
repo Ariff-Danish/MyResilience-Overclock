@@ -2,7 +2,7 @@ import { useState, useRef, useCallback } from 'react'
 import CameraCapture from './CameraCapture'
 import { authenticatedFetch } from '../../lib/api'
 
-const API_URL = import.meta.env.VITE_API_URL || 'https://myresilience-overclock-api.vercel.app'
+const API_URL = import.meta.env.VITE_API_URL || 'https://backend-delta-ivory-13.vercel.app'
 
 /**
  * AssetScanner — Enhanced camera-based inventory asset scanner with image recognition.

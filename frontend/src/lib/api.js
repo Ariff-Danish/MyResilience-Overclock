@@ -6,7 +6,7 @@
  */
 import { getAccessToken } from './supabase'
 
-const API_URL = import.meta.env.VITE_API_URL || 'https://myresilience-overclock-api.vercel.app'
+const API_URL = import.meta.env.VITE_API_URL || 'https://backend-delta-ivory-13.vercel.app'
 
 /**
  * Make an authenticated API request.

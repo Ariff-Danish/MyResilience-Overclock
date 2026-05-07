@@ -130,12 +130,9 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # Allowed origins for CSRF validation (must match CORS origins)
-CSRF_ALLOWED_ORIGINS = {
-    "https://myresilience-overclock-web.vercel.app",
-    "http://localhost:5173",
-    "http://localhost:3000",
-    "http://127.0.0.1:5173",
-}
+import os as _os
+_csrf_env = _os.getenv("ALLOWED_ORIGINS", "")
+CSRF_ALLOWED_ORIGINS = set(_csrf_env.split(",")) if _csrf_env and _csrf_env != "*" else None
 
 # Methods that require CSRF validation
 CSRF_METHODS = {"POST", "PUT", "DELETE", "PATCH"}
@@ -164,6 +161,10 @@ class CSRFProtectionMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         # Only validate state-changing methods
         if request.method not in CSRF_METHODS:
+            return await call_next(request)
+
+        # Skip if CSRF origins not configured (wildcard CORS mode)
+        if CSRF_ALLOWED_ORIGINS is None:
             return await call_next(request)
 
         # Skip exempt paths
