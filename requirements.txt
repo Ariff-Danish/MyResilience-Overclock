@@ -16,3 +16,4 @@ google-auth-oauthlib>=1.1.0
 twilio>=8.0.0
 sqlalchemy>=2.0.0
 pymysql>=1.1.0
+python-multipart
