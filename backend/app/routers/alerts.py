@@ -8,7 +8,7 @@ Endpoints:
   DELETE /api/alerts/{id}         — Delete an alert
   GET    /api/alerts/stats        — Alert statistics for current user
 """
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from typing import Optional
 from datetime import datetime
@@ -34,8 +34,8 @@ async def list_alerts(
     alert_type: Optional[str] = None,
     severity: Optional[str] = None,
     unread_only: bool = False,
-    limit: int = Field(50, ge=1, le=200),
-    offset: int = Field(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     user: AuthUser = Depends(get_current_user),
 ):
     """List alerts for the authenticated user with optional filters."""
