@@ -7,7 +7,7 @@ import base64
 import json
 import logging
 import os
-from typing import Optional
+from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from pydantic import BaseModel
@@ -59,7 +59,7 @@ class AssetScanResult(BaseModel):
 
 class BatchScanResult(BaseModel):
     """Result from batch scanning multiple items."""
-    items: list[AssetScanResult] = []
+    items: List[AssetScanResult] = []
     total_items: int = 0
     error: Optional[str] = None
 
@@ -333,7 +333,7 @@ Important:
 
 @router.post("/asset/batch", response_model=BatchScanResult)
 async def scan_asset_batch(
-    images: list[UploadFile] = File(...),
+    images: List[UploadFile] = File(...),
     user: AuthUser = Depends(get_current_user),
 ):
     """Batch scan multiple inventory asset images.

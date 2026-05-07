@@ -9,7 +9,8 @@ import os
 from typing import Optional
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from jose import JWTError, jwt
+import jwt
+from jwt.exceptions import PyJWTError
 
 SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET", "")
 security = HTTPBearer(auto_error=False)
@@ -52,7 +53,7 @@ def _verify_jwt(token: str) -> dict:
             options={"verify_aud": False},  # Supabase uses 'authenticated' audience
         )
         return payload
-    except JWTError as e:
+    except PyJWTError as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Invalid or expired token: {str(e)}",
