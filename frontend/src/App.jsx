@@ -94,6 +94,20 @@ function App() {
     },
   ]
 
+  // Load a demo scenario — sets inventory and triggers re-analysis
+  const loadScenario = (scenario) => {
+    setInventory(scenario.inventory)
+    setDemoMode(true)
+    logEvent(
+      `🎬 Scenario: ${scenario.label}`,
+      'Demo Control',
+      ['Watcher', 'Assessor', 'Coordinator', 'P.A.C.E'],
+      scenario.desc,
+      scenario.badgeClass === 'scenario-critical' ? 'error' : 'info'
+    )
+    addToast('info', 'Scenario Loaded', `${scenario.badge} ${scenario.label} — ${scenario.desc}`)
+  }
+
   // Core State
   const DEFAULT_INVENTORY = [
     { id: '1', name: 'Bottled Water', category: 'Water', unit: 'Liters', current_amount: 10, target_amount: 30, expiry_date: '2027-01-01' },
@@ -1014,6 +1028,39 @@ function App() {
         </div>
       </div>
 
+      {/* ── Demo Scenario Launcher ── */}
+      {demoMode && (
+        <div style={{
+          background: 'rgba(56,189,248,0.06)', border: '1px solid rgba(56,189,248,0.2)',
+          borderRadius: '10px', padding: '0.75rem 1rem', marginBottom: '1rem',
+          animation: 'fadeIn 0.3s ease'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+            <span style={{ fontSize: '0.85rem', fontWeight: '700', color: 'var(--primary)', letterSpacing: '0.5px' }}>DEMO SCENARIOS</span>
+            <span style={{ fontSize: '0.7rem', color: 'var(--muted)', fontStyle: 'italic' }}>Click to simulate</span>
+          </div>
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            {DEMO_SCENARIOS.map(s => (
+              <button key={s.id} onClick={() => loadScenario(s)} style={{
+                background: s.badgeClass === 'scenario-critical' ? 'rgba(244,63,94,0.15)' :
+                  s.badgeClass === 'scenario-danger' ? 'rgba(244,63,94,0.1)' :
+                  s.badgeClass === 'scenario-safe' ? 'rgba(34,197,94,0.1)' : 'rgba(245,158,11,0.1)',
+                border: `1px solid ${s.badgeClass === 'scenario-critical' ? 'rgba(244,63,94,0.4)' :
+                  s.badgeClass === 'scenario-danger' ? 'rgba(244,63,94,0.3)' :
+                  s.badgeClass === 'scenario-safe' ? 'rgba(34,197,94,0.3)' : 'rgba(245,158,11,0.3)'}`,
+                borderRadius: '8px', padding: '0.4rem 0.75rem', cursor: 'pointer',
+                color: 'var(--text)', fontSize: '0.78rem', fontWeight: '600',
+                display: 'flex', alignItems: 'center', gap: '0.4rem',
+                transition: 'all 0.2s ease'
+              }}>
+                <span>{s.badge}</span>
+                <span>{s.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* ── Threat Level Indicator ── */}
       {liveWeather?.alerts?.length > 0 ? (
         <div className={`threat-level-bar ${liveWeather.alerts.length >= 3 ? 'critical' : 'elevated'}`}>
@@ -1055,6 +1102,38 @@ function App() {
           </button>
         </div>
       )}
+
+      {/* ── Mission Timeline ── */}
+      <div style={{
+        background: 'rgba(56,189,248,0.04)', border: '1px solid rgba(56,189,248,0.15)',
+        borderRadius: '10px', padding: '0.6rem 1rem', marginBottom: '1rem',
+        display: 'flex', alignItems: 'center', gap: '0.15rem', fontSize: '0.72rem',
+        overflowX: 'auto', whiteSpace: 'nowrap'
+      }}>
+        {[
+          { icon: '🌧️', label: 'MET Warning', active: liveWeather?.alerts?.length > 0 },
+          { icon: '📊', label: 'Household Assessed', active: !!inventoryAnalysis },
+          { icon: '⏱️', label: inventoryAnalysis ? `Survival: ${inventoryAnalysis.survival_days || '?'} days` : 'Survival Window', active: !!inventoryAnalysis },
+          { icon: '🗺️', label: 'Evacuation Route', active: !!evacAdvisory },
+          { icon: '📱', label: 'Contacts Ready', active: team.length > 0 },
+          { icon: '✅', label: 'Family Plan', active: !!pacePlan },
+        ].map((step, i, arr) => (
+          <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>
+            <span style={{
+              display: 'inline-flex', alignItems: 'center', gap: '0.2rem',
+              padding: '0.25rem 0.5rem', borderRadius: '6px',
+              background: step.active ? 'rgba(34,197,94,0.12)' : 'rgba(255,255,255,0.04)',
+              border: `1px solid ${step.active ? 'rgba(34,197,94,0.3)' : 'rgba(255,255,255,0.08)'}`,
+              color: step.active ? '#4ade80' : 'var(--muted)',
+              fontWeight: step.active ? '600' : '400',
+              transition: 'all 0.3s ease'
+            }}>
+              <span>{step.icon}</span> {step.label}
+            </span>
+            {i < arr.length - 1 && <span style={{ color: step.active ? '#4ade80' : 'var(--muted)', margin: '0 0.1rem' }}>→</span>}
+          </span>
+        ))}
+      </div>
 
       {/* ── Analysis Loading Banner (first load only) ── */}
       {analysisLoading && !inventoryAnalysis && (
@@ -1339,7 +1418,55 @@ function App() {
                 </div>
               </div>
             </div>
-          )}
+           )}
+        </div>
+
+        {/* ── Threat Map Quick Card (visible when threat active) ── */}
+        {liveWeather?.alerts?.length > 0 && (
+          <div className="panel full-width" style={{
+            background: 'rgba(244,63,94,0.06)', border: '1px solid rgba(244,63,94,0.25)',
+            marginTop: '1rem'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <span style={{ fontSize: '1.5rem' }}>🗺️</span>
+                <div>
+                  <h4 style={{ margin: 0, fontSize: '0.9rem' }}>Evacuation Intelligence Available</h4>
+                  <p style={{ margin: 0, fontSize: '0.78rem', color: 'var(--muted)' }}>
+                    {evacAdvisory
+                      ? `${evacAdvisory.shelter_locations?.length || 0} shelters found · Nearest: ${evacAdvisory.shelter_locations?.[0]?.name || 'calculating...'}`
+                      : 'AI-generated shelter routes, safe zones, and SMS alerts ready'}
+                  </p>
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <button onClick={() => setActiveTab('threatmap')} style={{
+                  background: 'rgba(244,63,94,0.15)', border: '1px solid rgba(244,63,94,0.4)',
+                  color: '#fca5a5', borderRadius: '8px', padding: '0.4rem 1rem',
+                  cursor: 'pointer', fontSize: '0.8rem', fontWeight: '700'
+                }}>
+                  Open Threat Map →
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Why Malaysia Impact Banner ── */}
+        <div style={{
+          background: 'rgba(56,189,248,0.04)', border: '1px solid rgba(56,189,248,0.12)',
+          borderRadius: '10px', padding: '0.75rem 1rem', marginTop: '1rem',
+          display: 'flex', alignItems: 'center', gap: '0.75rem', fontSize: '0.75rem',
+          color: 'var(--muted)', flexWrap: 'wrap'
+        }}>
+          <span style={{ fontSize: '1rem' }}>🇲🇾</span>
+          <span>Built for Malaysian flood, haze, thunderstorm & landslide risk</span>
+          <span style={{ opacity: 0.4 }}>·</span>
+          <span>MET Malaysia live data</span>
+          <span style={{ opacity: 0.4 }}>·</span>
+          <span>Zero personal data stored</span>
+          <span style={{ opacity: 0.4 }}>·</span>
+          <span>Families · NGOs · Community Centres</span>
         </div>
       </div>
     </div>
@@ -1901,9 +2028,15 @@ function App() {
                   {evacAdvisory.sms_results.map((r, i) => (
                     <span key={i} className={`sms-status-badge sms-${r.status}`}>
                       {r.status === 'sent' ? '✅' : r.status === 'skipped' ? '⏭️' : '❌'} {r.phone || 'Contact'}: {r.status}
+                      {r.reason?.includes('Simulated') && <span style={{ fontSize: '0.65rem', opacity: 0.7 }}> (Demo)</span>}
                     </span>
                   ))}
                 </div>
+              )}
+              {demoMode && (
+                <span style={{ fontSize: '0.7rem', color: 'var(--muted)', fontStyle: 'italic', marginTop: '0.25rem', display: 'block' }}>
+                  Demo Mode — SMS dispatch simulated for hackathon presentation
+                </span>
               )}
             </div>
 
