@@ -448,11 +448,25 @@ async def run_coordinator_agent(
     survival: Optional[SurvivalResult] = None, 
     inventory_analysis: Optional[InventoryAnalysisResult] = None,
     team: list = [], 
-    location: str = "Malaysia"
+    location: str = "Malaysia",
+    settings_pref=None
 ) -> CoordinatorResult:
     try:
-        contacts = [m for m in team if m.get("role") == "emergency_contact"]
-        user = f"location: {location}\ncontacts: {json.dumps([{'name': c['name'], 'email': c.get('email', '')} for c in contacts])}\n"
+        # Normalize team to dicts (some callers pass Pydantic objects, some pass dicts)
+        team_dicts = []
+        for m in team:
+            if hasattr(m, "model_dump"):
+                team_dicts.append(m.model_dump())
+            elif isinstance(m, dict):
+                team_dicts.append(m)
+            else:
+                # Fallback for generic objects
+                team_dicts.append(vars(m) if hasattr(m, "__dict__") else m)
+
+        contacts = [m for m in team_dicts if m.get("role") == "emergency_contact"]
+        user = f"location: {location}\n"
+        user += f"team: {json.dumps([{'name': m.get('name'), 'role': m.get('role')} for m in team_dicts])}\n"
+        user += f"contacts: {json.dumps([{'name': c.get('name'), 'email': c.get('email', '')} for c in contacts])}\n"
         if weather:
             user += f"weather: {weather.model_dump_json()}\n"
         if survival:
@@ -463,7 +477,39 @@ async def run_coordinator_agent(
         result = await _call_groq(COORDINATOR_PROMPT, user)
         coordinator = CoordinatorResult(**result)
 
+        mode = "UNKNOWN"
+        if inventory_analysis and (not weather or weather.severity == "normal"):
+            mode = "PREPAREDNESS"
+        elif weather and weather.severity in ["warning", "info"] and (not survival or survival.evacuation_urgency in ["shelter_in_place", "none"]):
+            mode = "ADVISORY"
+        elif survival and survival.evacuation_urgency in ["immediate", "prepare"]:
+            mode = "EMERGENCY"
+
+        send_email_enabled = False
+        if settings_pref:
+            if mode == "PREPAREDNESS" and getattr(settings_pref, 'emailPreparedness', False):
+                send_email_enabled = True
+            elif mode == "ADVISORY" and getattr(settings_pref, 'emailAdvisories', False):
+                send_email_enabled = True
+            elif mode == "EMERGENCY" and getattr(settings_pref, 'emailEmergency', False):
+                send_email_enabled = True
+
         if coordinator.action_taken in ["emergency_email_sent", "user_email_sent"]:
+            if send_email_enabled:
+                if coordinator.action_taken == "emergency_email_sent":
+                    for contact in contacts:
+                        email = contact.get("email", "")
+                        if email and "@" in email:
+                            try:
+                                send_email(to=email, subject=coordinator.subject_drafted, body=coordinator.message_drafted)
+                            except Exception:
+                                pass
+                if NOTIFICATION_EMAIL:
+                    try:
+                        send_email(to=NOTIFICATION_EMAIL, subject=coordinator.subject_drafted, body=coordinator.message_drafted)
+                    except Exception:
+                        pass
+
             if coordinator.action_taken == "emergency_email_sent":
                 for contact in contacts:
                     email = contact.get("email", "")
@@ -489,9 +535,17 @@ async def run_coordinator_agent(
             
             if NOTIFICATION_EMAIL:
                 try:
-                    send_email(to=NOTIFICATION_EMAIL, subject=coordinator.subject_drafted, body=coordinator.message_drafted)
-                except Exception:
-                    pass
+                    from app.agents.sms_tools import send_bulk_sms
+                    phone_numbers = [
+                        m.get("phone", "").strip() for m in team
+                        if m.get("role") == "emergency_contact" and m.get("phone", "").strip()
+                    ]
+                    if phone_numbers:
+                        sms_body = f"🚨 MYRESILIENCE EMERGENCY: {coordinator.subject_drafted[:80]}. Evacuate now. Call 999 immediately."
+                        send_bulk_sms(phone_numbers, sms_body[:160])
+                        print(f"[Coordinator] SMS dispatched to {len(phone_numbers)} contact(s).")
+                except Exception as sms_err:
+                    print(f"[Coordinator] SMS dispatch failed (non-critical): {sms_err}")
 
         return coordinator
     except Exception as e:

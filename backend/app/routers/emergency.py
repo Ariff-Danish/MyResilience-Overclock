@@ -234,6 +234,12 @@ class TeamMember(BaseModel):
     remarks: Optional[str] = None
 
 
+class SettingsModel(BaseModel):
+    locationTracking: bool = False
+    emailPreparedness: bool = False
+    emailAdvisories: bool = False
+    emailEmergency: bool = False
+
 class RiskEvaluationRequest(BaseModel):
     inventory: List[InventoryItem]
     team: List[TeamMember]
@@ -245,6 +251,8 @@ class RiskEvaluationRequest(BaseModel):
 class InventoryAnalysisRequest(BaseModel):
     inventory: List[InventoryItem]
     team: List[TeamMember]
+    location: Optional[str] = None
+    settings: Optional[SettingsModel] = None
 
 
 class EvacuationAdvisoryRequest(BaseModel):
@@ -446,12 +454,22 @@ async def analyze_inventory(req: InventoryAnalysisRequest):
             # Legacy: coordinator_message kept for backward compatibility
             "coordinator_message": b["summary"],
         }
+        
+        if req.settings and req.settings.emailPreparedness:
+            from app.agents.safesync_agents import InventoryAnalysisResult
+            ia_data = {k: b[k] for k in InventoryAnalysisResult.model_fields.keys() if k in b}
+            ia = InventoryAnalysisResult(**ia_data)
+            asyncio.create_task(run_coordinator_agent(
+                inventory_analysis=ia, team=req.team, location=req.location or "Malaysia", settings_pref=req.settings
+            ))
+            
+        return response_data
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/evaluate_risk")
-async def evaluate_risk(req: RiskEvaluationRequest, demo: bool = False):
+async def evaluate_risk(req: RiskEvaluationRequest, demo: bool = False, demo_scenario: int = 1):
     try:
         # Resolve user location
         user_location_name = "Petaling"

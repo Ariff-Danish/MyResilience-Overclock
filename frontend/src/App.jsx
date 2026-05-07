@@ -34,6 +34,58 @@ function App() {
   const [distressCustomMsg, setDistressCustomMsg] = useState('')
   const distressCountdownRef = useRef(null)
 
+  // ── Demo Scenario Presets ──────────────────────────────────────────────────────
+  const DEMO_SCENARIOS = [
+    {
+      id: 1, label: 'Prepared + Danger',
+      badge: '🔴', badgeClass: 'scenario-danger',
+      desc: 'Full supplies · Active Red Alert',
+      inventory: [
+        { id: 'd1', name: 'Bottled Water', category: 'Water', unit: 'Liters', current_amount: 60, target_amount: 60, expiry_date: '2028-01-01' },
+        { id: 'd2', name: 'Emergency Rations', category: 'Food', unit: 'Servings', current_amount: 40, target_amount: 40, expiry_date: '2027-06-01' },
+        { id: 'd3', name: 'First Aid Kit', category: 'Medical', unit: 'Kits', current_amount: 2, target_amount: 2, expiry_date: '2028-01-01' },
+        { id: 'd4', name: 'Portable Generator', category: 'Power', unit: 'Units', current_amount: 1, target_amount: 1, expiry_date: '' },
+        { id: 'd5', name: 'Emergency Tent', category: 'Shelter', unit: 'Units', current_amount: 1, target_amount: 1, expiry_date: '' },
+        { id: 'd6', name: 'Satellite Phone', category: 'Communication', unit: 'Units', current_amount: 1, target_amount: 1, expiry_date: '' },
+        { id: 'd7', name: 'Multi-Tool Kit', category: 'Tools', unit: 'Sets', current_amount: 1, target_amount: 1, expiry_date: '' },
+        { id: 'd8', name: 'Hygiene Kit', category: 'Hygiene', unit: 'Kits', current_amount: 3, target_amount: 3, expiry_date: '2027-01-01' },
+      ]
+    },
+    {
+      id: 2, label: 'Prepared + No Danger',
+      badge: '🟢', badgeClass: 'scenario-safe',
+      desc: 'Full supplies · Clear weather',
+      inventory: [
+        { id: 'd1', name: 'Bottled Water', category: 'Water', unit: 'Liters', current_amount: 60, target_amount: 60, expiry_date: '2028-01-01' },
+        { id: 'd2', name: 'Emergency Rations', category: 'Food', unit: 'Servings', current_amount: 40, target_amount: 40, expiry_date: '2027-06-01' },
+        { id: 'd3', name: 'First Aid Kit', category: 'Medical', unit: 'Kits', current_amount: 2, target_amount: 2, expiry_date: '2028-01-01' },
+        { id: 'd4', name: 'Portable Generator', category: 'Power', unit: 'Units', current_amount: 1, target_amount: 1, expiry_date: '' },
+        { id: 'd5', name: 'Emergency Tent', category: 'Shelter', unit: 'Units', current_amount: 1, target_amount: 1, expiry_date: '' },
+        { id: 'd6', name: 'Satellite Phone', category: 'Communication', unit: 'Units', current_amount: 1, target_amount: 1, expiry_date: '' },
+        { id: 'd7', name: 'Multi-Tool Kit', category: 'Tools', unit: 'Sets', current_amount: 1, target_amount: 1, expiry_date: '' },
+        { id: 'd8', name: 'Hygiene Kit', category: 'Hygiene', unit: 'Kits', current_amount: 3, target_amount: 3, expiry_date: '2027-01-01' },
+      ]
+    },
+    {
+      id: 3, label: 'Not Prepared + Danger',
+      badge: '🚨', badgeClass: 'scenario-critical',
+      desc: 'Critical gaps · Active Red Alert',
+      inventory: [
+        { id: 'd1', name: 'Bottled Water', category: 'Water', unit: 'Liters', current_amount: 2, target_amount: 30, expiry_date: '2027-01-01' },
+        { id: 'd2', name: 'Canned Food', category: 'Food', unit: 'Cans', current_amount: 1, target_amount: 20, expiry_date: '2025-06-01' },
+      ]
+    },
+    {
+      id: 4, label: 'Not Prepared + No Danger',
+      badge: '🟡', badgeClass: 'scenario-warn',
+      desc: 'Critical gaps · Clear weather',
+      inventory: [
+        { id: 'd1', name: 'Bottled Water', category: 'Water', unit: 'Liters', current_amount: 2, target_amount: 30, expiry_date: '2027-01-01' },
+        { id: 'd2', name: 'Canned Food', category: 'Food', unit: 'Cans', current_amount: 1, target_amount: 20, expiry_date: '2025-06-01' },
+      ]
+    },
+  ]
+
   // Core State
   const DEFAULT_INVENTORY = [
     { id: '1', name: 'Bottled Water', category: 'Water', unit: 'Liters', current_amount: 10, target_amount: 30, expiry_date: '2027-01-01' },
@@ -217,12 +269,7 @@ function App() {
   }
 
   // --- AUTO ANALYSIS (Debounced) ---
-  const initialRender = useRef(true)
   useEffect(() => {
-    if (initialRender.current) {
-      initialRender.current = false
-      return
-    }
     const timer = setTimeout(() => {
       runAutoAnalysis()
     }, 1500)
@@ -641,13 +688,22 @@ function App() {
     }
   }
 
+  const deleteFromDb = async (type, id) => {
+    try {
+      const endpoint = type === 'inventory' ? 'inventory' : 'team'
+      await fetch(`${API}/api/data/${endpoint}/${id}`, { method: 'DELETE' })
+    } catch (err) { console.error(`Failed to delete ${type}:`, err) }
+  }
+
   // --- FORMS ---
   const categories = ['Water', 'Food', 'Medical', 'Security', 'Shelter', 'Communication', 'Power', 'Tools', 'Hygiene', 'Transport', 'Documents', 'Misc']
   const [newItem, setNewItem] = useState({ name: '', category: 'Water', unit: 'Units', current_amount: 0, target_amount: 0, expiry_date: '' })
 
   const addInventoryItem = () => {
     if (!newItem.name) return
-    setInventory([{ ...newItem, id: Date.now().toString() }, ...inventory])
+    const item = { ...newItem, id: Date.now().toString() }
+    setInventory([item, ...inventory])
+    saveToDb('inventory', item)
     setNewItem({ name: '', category: 'Water', unit: 'Units', current_amount: 0, target_amount: 0, expiry_date: '' })
   }
 
@@ -661,6 +717,7 @@ function App() {
 
   const saveEdit = () => {
     setInventory(inventory.map(i => i.id === editingId ? editItemData : i))
+    saveToDb('inventory', editItemData)
     setEditingId(null)
     setEditItemData(null)
   }
@@ -691,6 +748,26 @@ function App() {
 
   const saveEditMember = () => {
     setTeam(team.map(m => m.id === editingMemberId ? editMemberData : m))
+    setEditingMemberId(null)
+    setEditMemberData(null)
+  }
+
+  const cancelEditMember = () => {
+    setEditingMemberId(null)
+    setEditMemberData(null)
+  }
+
+  const [editingMemberId, setEditingMemberId] = useState(null)
+  const [editMemberData, setEditMemberData] = useState(null)
+
+  const startEditMember = (member) => {
+    setEditingMemberId(member.id)
+    setEditMemberData({ ...member })
+  }
+
+  const saveEditMember = () => {
+    setTeam(team.map(m => m.id === editingMemberId ? editMemberData : m))
+    saveToDb('team', editMemberData)
     setEditingMemberId(null)
     setEditMemberData(null)
   }

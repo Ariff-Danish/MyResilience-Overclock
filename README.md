@@ -92,6 +92,36 @@ The system is designed with a strict **Local-First, Privacy-by-Design** security
 
 ---
 
+## 🖥️ Dashboard Features
+
+| Module | Description |
+|---|---|
+| **⚡ Command Dashboard** | Real-time tactical overview with live MYT clock, threat status, and location detection |
+| **🛡️ Asset Readiness** | Category radar chart + readiness score trend history embedded in a single panel |
+| **🌤️ Tactical Intel** | Merged weather + threat panel — glows red on active alerts, shows MET forecast + official warning link |
+| **📦 Asset Inventory** | Full CRUD for household supplies with colour-coded categories, stock bars, and expiry tracking |
+| **👥 Personnel & Comms** | Editable team roster with role colour-coding (family / emergency contact / useful contact) |
+| **🗺️ Threat Map** | Leaflet.js live map with proximity shelter routing, SMS copy, and evacuation advisory download |
+| **📡 Activity Network** | Expandable accordion log of every agent run — shows triggers, reasoning, and agent chain |
+| **⚙️ Settings** | Centralised preferences for GPS location tracking and per-category email notification control |
+
+---
+
+## ⚙️ Settings & Preferences
+
+The **Settings** tab gives users full control over notification behaviour:
+
+| Toggle | Description |
+|---|---|
+| 📍 **GPS Location Tracking** | Auto-fetches browser location for proximity-based threat detection. Off by default. |
+| ✉️ **Preparedness Emails** | Allow the agent to send restocking/audit emails when inventory is low. |
+| ✉️ **Advisory Emails** | Allow the agent to send weather briefings when a non-critical threat is detected. |
+| 🚨 **Emergency Emails** | Allow the agent to email emergency contacts during a critical disaster event. |
+
+> All toggles default to **OFF**. Settings are persisted to `localStorage` and passed to the backend on every agent run.
+
+---
+
 ## 🌍 Real-World Applicability
 
 | Context | Application |
@@ -162,6 +192,27 @@ Open [http://localhost:5173](http://localhost:5173)
 | `ALLOWED_ORIGINS` | `*` or comma separated URLs | Optional | Backend `.env` |
 
 > **Vercel Deployments:** Environment variables must be explicitly set in the Vercel Dashboard for both `myresilience-overclock-web` and `myresilience-overclock-api` projects.
+
+---
+
+---
+
+## 🚀 Deployment (Vercel)
+
+This project is configured for easy deployment as a monorepo on **Vercel**.
+
+### Configuration
+- **Frontend**: React (Vite)
+- **Backend**: FastAPI (Python Serverless)
+- **Routing**: `vercel.json` manages API routing to the serverless function.
+
+### Steps
+1. Push your code to GitHub.
+2. Connect the repository to Vercel.
+3. In **Project Settings > Environment Variables**, add all keys from `.env.example`.
+4. Set the **Build Command** to: `cd frontend && npm install && npm run build`
+5. Set the **Output Directory** to: `frontend/dist`
+6. Deploy. Vercel will automatically detect the `vercel.json` and `api/index.py` for your backend.
 
 ---
 

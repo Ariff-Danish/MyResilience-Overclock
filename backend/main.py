@@ -100,7 +100,7 @@ ALLOWED_ORIGINS = [
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Accept", "Authorization"],
@@ -124,6 +124,7 @@ app.add_middleware(CSRFProtectionMiddleware)
 # emergency.router has no prefix, so /api/weather, /api/evaluate_risk, etc.
 from app.routers import emergency
 app.include_router(emergency.router, prefix="/api", tags=["emergency"])
+app.include_router(user_data.router, prefix="/api", tags=["data"])
 
 # Autonomous agent monitoring
 # agent_status.router has prefix="/agents", so /api/agents/status, /api/agents/events, etc.
