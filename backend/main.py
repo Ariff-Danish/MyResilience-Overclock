@@ -201,8 +201,8 @@ async def health_check():
     # Check Supabase connectivity via lightweight HTTP (avoids SDK WebSocket issues in serverless)
     db_status = "not_configured"
     try:
-        supabase_url = os.getenv("SUPABASE_URL", "")
-        supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+        supabase_url = os.getenv("SUPABASE_URL", "").strip().strip("\ufeff")
+        supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip().strip("\ufeff")
         if supabase_url and supabase_key:
             import requests as req_lib
             # Use the root REST endpoint — no table dependency

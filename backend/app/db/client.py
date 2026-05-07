@@ -7,9 +7,9 @@ Anon key is used for user-scoped operations (respects RLS).
 import os
 from supabase import create_client, Client
 
-SUPABASE_URL = os.getenv("SUPABASE_URL", "")
-SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "")
-SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip().strip("\ufeff")
+SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "").strip().strip("\ufeff")
+SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip().strip("\ufeff")
 
 
 def get_supabase() -> Client:
