@@ -23,6 +23,11 @@ function App() {
   const [isAdmin, setIsAdmin] = useState(false)
   const [isListening, setIsListening] = useState(false)
   const [voiceError, setVoiceError] = useState('')
+  const [activeUserTab, setActiveUserTab] = useState('dashboard')
+  const [showSosChat, setShowSosChat] = useState(false)
+  const [sosChatHistory, setSosChatHistory] = useState([])
+  const [sosChatInput, setSosChatInput] = useState('')
+  const [isSosChatLoading, setIsSosChatLoading] = useState(false)
 
   // ── Demo Scenario Presets ──────────────────────────────────────────────────────
   const DEMO_SCENARIOS = [
@@ -1740,86 +1745,154 @@ function App() {
     </div>
   )
 
-  const handleSOS = async () => {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      const msg = prompt("Describe your emergency:")
-      if(msg) sendSOS(msg)
-      return
+  const speakText = (text) => {
+    if ('speechSynthesis' in window) {
+      const utterance = new SpeechSynthesisUtterance(text)
+      utterance.lang = 'en-US'
+      window.speechSynthesis.speak(utterance)
     }
-
-    const recognition = new SpeechRecognition()
-    recognition.lang = 'en-US'
-    recognition.onstart = () => setVoiceError("Listening for SOS...")
-    recognition.onerror = () => {
-      const msg = prompt("Microphone error. Describe your emergency manually:")
-      if(msg) sendSOS(msg)
-    }
-    recognition.onresult = (event) => {
-      setVoiceError("SOS Transmitting...")
-      sendSOS(event.results[0][0].transcript)
-    }
-    recognition.start()
   }
 
-  const sendSOS = async (transcript) => {
+  const handleSOSClick = () => {
+    setShowSosChat(true)
+    const initMsg = { role: 'agent', content: 'SafeSync Emergency Triage activated. What is your emergency? Try to speak calmly.' }
+    setSosChatHistory([initMsg])
+    speakText(initMsg.content)
+  }
+
+  const sendSosChatMessage = async (msgContent) => {
+    if (!msgContent.trim()) return;
+    const newUserMsg = { role: 'user', content: msgContent }
+    const newHistory = [...sosChatHistory, newUserMsg]
+    setSosChatHistory(newHistory)
+    setSosChatInput('')
+    setIsSosChatLoading(true)
+
     try {
-      const res = await fetch(`${API}/api/sos_trigger`, {
+      const res = await fetch(`${API}/api/sos_chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ transcript })
+        body: JSON.stringify({ history: newHistory })
       })
       const data = await res.json()
       
-      setIsAdmin(true)
-      setActiveTab('threatmap')
-      setVoiceError('')
-      
-      const event = {
-        id: Date.now().toString(),
-        time: new Date().toLocaleTimeString(),
-        title: 'Emergency Escalation',
-        userAction: 'SOS Triggered',
-        agentsTriggered: ['Assessor', 'Coordinator'],
-        reasoning: `Transcript: "${transcript}"\nSuggested Action: ${data.suggested_action}\nReasoning: ${data.escalation_reasoning}`,
-        expanded: true,
-        type: data.threat_level === 'critical' ? 'critical' : 'warning'
+      if (data.is_complete) {
+        const agentMsg = { role: 'agent', content: `Understood. Threat level assessed as ${data.threat_level.toUpperCase()}. Generating Evacuation Advisory and alerting Command.` }
+        setSosChatHistory(prev => [...prev, agentMsg])
+        speakText(agentMsg.content)
+        
+        const event = {
+          id: Date.now().toString(),
+          time: new Date().toLocaleTimeString(),
+          title: 'Emergency Escalation (Triage Complete)',
+          userAction: 'SOS Chat Completed',
+          agentsTriggered: ['Triage', 'Coordinator'],
+          reasoning: `Suggested Action: ${data.suggested_action}\nReasoning: ${data.escalation_reasoning}`,
+          expanded: true,
+          type: data.threat_level === 'critical' ? 'critical' : 'warning'
+        }
+        setActivityEvents(prev => [event, ...prev])
+
+        // Force user to Threat Map tab
+        setTimeout(() => {
+          setActiveUserTab('threatmap')
+          runEvacuationAdvisory(false) // Auto-run advisory
+          setShowSosChat(false)
+        }, 4000)
+      } else {
+        const agentMsg = { role: 'agent', content: data.next_response }
+        setSosChatHistory(prev => [...prev, agentMsg])
+        speakText(data.next_response)
       }
-      setActivityEvents(prev => [event, ...prev])
     } catch(err) {
-      alert("SOS failed to send.")
-      setVoiceError('')
+      setSosChatHistory(prev => [...prev, { role: 'agent', content: 'Connection failed. Please call emergency services (999) directly.' }])
     }
+    setIsSosChatLoading(false)
   }
 
-  const renderUserDashboard = () => (
-    <div className="tab-pane animate-fade-in" style={{textAlign: 'center', maxWidth: '800px', margin: '0 auto', paddingTop: '4rem'}}>
-      <h2 style={{fontSize: '2.5rem', marginBottom: '3rem'}}>SafeSync</h2>
+  const handleSosVoice = () => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      setVoiceError("Voice not supported. Please type.")
+      return
+    }
+    const recognition = new SpeechRecognition()
+    recognition.lang = 'en-US'
+    recognition.onstart = () => setIsListening(true)
+    recognition.onresult = (event) => {
+      setIsListening(false)
+      const transcript = event.results[0][0].transcript
+      sendSosChatMessage(transcript)
+    }
+    recognition.onerror = () => setIsListening(false)
+    recognition.start()
+  }
+
+  const renderSosChat = () => (
+    <div className="panel animate-fade-in" style={{maxWidth: '800px', margin: '0 auto', textAlign: 'left', display: 'flex', flexDirection: 'column', height: '65vh'}}>
+      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--panel-border)', paddingBottom: '1rem', marginBottom: '1rem'}}>
+        <h3 style={{color: 'var(--danger)', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem'}}><LifeBuoy size={24} /> Emergency Triage Active</h3>
+        <button className="icon-btn" onClick={() => setShowSosChat(false)}><X size={20} /></button>
+      </div>
       
-      <div style={{display: 'flex', justifyContent: 'center', marginBottom: '4rem'}}>
-        <button 
-          className="sos-btn pulse-red"
-          onClick={handleSOS}
-          style={{
-            width: '250px', height: '250px', borderRadius: '50%', 
-            backgroundColor: 'var(--danger)', color: 'white', fontSize: '2rem', 
-            fontWeight: 'bold', border: '8px solid rgba(255, 59, 48, 0.3)', cursor: 'pointer',
-            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-            transition: 'transform 0.2s'
-          }}>
-          <LifeBuoy size={80} style={{marginBottom: '1rem'}} />
-          SOS
-        </button>
+      <div style={{flex: 1, overflowY: 'auto', marginBottom: '1rem', display: 'flex', flexDirection: 'column', gap: '1rem', paddingRight: '0.5rem'}}>
+        {sosChatHistory.map((msg, i) => (
+          <div key={i} style={{alignSelf: msg.role === 'user' ? 'flex-end' : 'flex-start', maxWidth: '85%', padding: '1rem', borderRadius: '12px', backgroundColor: msg.role === 'user' ? 'var(--primary)' : 'var(--panel-border)', color: msg.role === 'user' ? 'white' : 'var(--text-main)'}}>
+            <div style={{fontSize: '0.8rem', opacity: 0.7, marginBottom: '0.25rem'}}>{msg.role === 'user' ? 'You' : 'SafeSync Dispatcher'}</div>
+            <div style={{lineHeight: '1.4'}}>{msg.content}</div>
+          </div>
+        ))}
+        {isSosChatLoading && <div style={{alignSelf: 'flex-start', color: 'var(--muted)', fontSize: '0.9rem', fontStyle: 'italic'}}>Dispatcher is assessing...</div>}
       </div>
 
-      {voiceError && <div className="text-yellow" style={{fontSize: '1.2rem', marginBottom: '2rem'}}>{voiceError}</div>}
+      <div style={{display: 'flex', gap: '0.5rem'}}>
+        <input 
+          style={{flex: 1, borderRadius: '8px', border: '1px solid var(--panel-border)', padding: '0.75rem 1rem', backgroundColor: 'var(--bg-main)', color: 'var(--text-main)'}} 
+          placeholder="Describe your situation..." 
+          value={sosChatInput} 
+          onChange={e => setSosChatInput(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && sendSosChatMessage(sosChatInput)}
+          disabled={isSosChatLoading}
+        />
+        <button className={`btn-primary ${isListening ? 'listening' : ''}`} onClick={handleSosVoice} title="Hold to Speak" disabled={isSosChatLoading} style={{padding: '0 1rem'}}>
+          <Mic size={20} />
+        </button>
+        <button className="btn-primary" onClick={() => sendSosChatMessage(sosChatInput)} disabled={isSosChatLoading || !sosChatInput.trim()}>Send</button>
+      </div>
+    </div>
+  )
 
-      {inventoryAnalysis?.survival_guide_markdown ? (
-        <div className="panel text-left" style={{backgroundColor: 'var(--panel-bg)', padding: '2rem', borderRadius: '12px'}}>
-          <div className="markdown-content" dangerouslySetInnerHTML={{__html: inventoryAnalysis.survival_guide_markdown.replace(/\n/g, '<br/>')}}></div>
-        </div>
-      ) : (
-        <p className="text-muted">Survival Guide currently unavailable. Admin must run Preparedness Audit.</p>
+  const renderUserDashboard = () => (
+    <div className="tab-pane animate-fade-in" style={{textAlign: 'center', maxWidth: '800px', margin: '0 auto', paddingTop: '2rem'}}>
+      {showSosChat ? renderSosChat() : (
+        <>
+          <h2 style={{fontSize: '2.5rem', marginBottom: '3rem'}}>SafeSync</h2>
+          <div style={{display: 'flex', justifyContent: 'center', marginBottom: '4rem'}}>
+            <button 
+              className="sos-btn pulse-red"
+              onClick={handleSOSClick}
+              style={{
+                width: '250px', height: '250px', borderRadius: '50%', 
+                backgroundColor: 'var(--danger)', color: 'white', fontSize: '2rem', 
+                fontWeight: 'bold', border: '8px solid rgba(255, 59, 48, 0.3)', cursor: 'pointer',
+                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                transition: 'transform 0.2s'
+              }}>
+              <LifeBuoy size={80} style={{marginBottom: '1rem'}} />
+              SOS
+            </button>
+          </div>
+
+          {voiceError && <div className="text-yellow" style={{fontSize: '1.2rem', marginBottom: '2rem'}}>{voiceError}</div>}
+
+          {inventoryAnalysis?.survival_guide_markdown ? (
+            <div className="panel text-left" style={{backgroundColor: 'var(--panel-bg)', padding: '2rem', borderRadius: '12px'}}>
+              <div className="markdown-content" dangerouslySetInnerHTML={{__html: inventoryAnalysis.survival_guide_markdown.replace(/\\n/g, '<br/>')}}></div>
+            </div>
+          ) : (
+            <p className="text-muted">Survival Guide currently unavailable. Admin must run Preparedness Audit.</p>
+          )}
+        </>
       )}
     </div>
   )
@@ -1840,9 +1913,14 @@ function App() {
           </div>
 
           {!isAdmin ? (
-            <button className="active">
-              <Activity className="nav-icon" /> {isSidebarOpen && 'Survival Dashboard'}
-            </button>
+            <>
+              <button className={activeUserTab === 'dashboard' ? 'active' : ''} onClick={() => setActiveUserTab('dashboard')}>
+                <Activity className="nav-icon" /> {isSidebarOpen && 'Survival Dashboard'}
+              </button>
+              <button className={activeUserTab === 'threatmap' ? 'active' : ''} onClick={() => setActiveUserTab('threatmap')}>
+                <Map className="nav-icon" /> {isSidebarOpen && 'Evacuation Map'}
+              </button>
+            </>
           ) : (
             <>
               <button className={activeTab === 'dashboard' ? 'active' : ''} onClick={() => setActiveTab('dashboard')}>
@@ -1857,9 +1935,6 @@ function App() {
               <button className={activeTab === 'activity' ? 'active' : ''} onClick={() => setActiveTab('activity')}>
                 <Activity className="nav-icon" /> {isSidebarOpen && 'Activity Network'}
               </button>
-              <button className={activeTab === 'threatmap' ? 'active' : ''} onClick={() => setActiveTab('threatmap')}>
-                <Map className="nav-icon" /> {isSidebarOpen && 'Threat Map'}
-              </button>
               <button className={activeTab === 'settings' ? 'active' : ''} onClick={() => setActiveTab('settings')}>
                 <Settings className="nav-icon" /> {isSidebarOpen && 'Settings'}
               </button>
@@ -1873,14 +1948,16 @@ function App() {
 
       <main className="main-content">
         {!isAdmin ? (
-          renderUserDashboard()
+          <>
+            {activeUserTab === 'dashboard' && renderUserDashboard()}
+            {activeUserTab === 'threatmap' && renderThreatMap()}
+          </>
         ) : (
           <>
             {activeTab === 'dashboard' && renderDashboard()}
             {activeTab === 'inventory' && renderInventory()}
             {activeTab === 'team' && renderTeam()}
             {activeTab === 'activity' && renderActivity()}
-            {activeTab === 'threatmap' && renderThreatMap()}
             {activeTab === 'settings' && renderSettings()}
           </>
         )}

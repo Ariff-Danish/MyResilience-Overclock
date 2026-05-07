@@ -16,6 +16,7 @@ from app.agents.safesync_agents import (
     PreparednessBriefingResult,
     run_voice_parser_agent,
     run_sos_assessor_agent,
+    run_sos_triage_agent,
 )
 from app.agents.sms_tools import send_bulk_sms
 from app.utils.geo import (
@@ -652,6 +653,23 @@ class SOSRequest(BaseModel):
 async def sos_trigger(req: SOSRequest):
     try:
         result = await run_sos_assessor_agent(req.transcript)
+        return result.model_dump()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+class SOSChatMessage(BaseModel):
+    role: str
+    content: str
+
+class SOSChatRequest(BaseModel):
+    history: list[SOSChatMessage]
+    
+@router.post("/sos_chat")
+async def sos_chat(req: SOSChatRequest):
+    try:
+        # Convert history to dicts for the agent
+        chat_history = [{"role": msg.role, "content": msg.content} for msg in req.history]
+        result = await run_sos_triage_agent(chat_history)
         return result.model_dump()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

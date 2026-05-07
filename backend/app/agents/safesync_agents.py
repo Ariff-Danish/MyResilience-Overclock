@@ -1057,3 +1057,55 @@ async def run_sos_assessor_agent(transcript: str) -> SOSAssessorResult:
             escalation_reasoning="System error during SOS assessment, defaulting to critical.",
             suggested_action="Please contact emergency services (999) immediately."
         )
+
+
+# ══════════════════════════════════════════════════════════════
+# NEW: SOS TRIAGE AGENT (CHATBOT)
+# ══════════════════════════════════════════════════════════════
+
+class SOSTriageResult(BaseModel):
+    is_complete: bool
+    next_response: str
+    threat_level: str
+    suggested_action: str
+    escalation_reasoning: str
+
+SOS_TRIAGE_PROMPT = """ROLE: You are the SafeSync Emergency Triage AI Dispatcher. 
+Your goal is to quickly and calmly determine the nature and severity of the user's emergency.
+
+RULES:
+1. If you need more information to assess the situation (e.g., location, type of danger, injuries), set "is_complete" to false, and ask ONE clear, calm question in "next_response".
+2. Do not ask more than 1 or 2 questions. Time is of the essence in an emergency.
+3. If the user's situation is clear OR if they mention immediate life-threatening danger (e.g. "flooding fast", "fire", "intruder", "can't breathe"), immediately set "is_complete" to true.
+4. When "is_complete" is true, provide the "threat_level" (critical or warning), a "suggested_action" for the user to take immediately, and your "escalation_reasoning". 
+5. When "is_complete" is false, leave threat_level, suggested_action, and escalation_reasoning empty ("").
+
+OUTPUT (STRICT JSON):
+{
+  "is_complete": true/false,
+  "next_response": "<your conversational reply/question>",
+  "threat_level": "<critical|warning|empty>",
+  "suggested_action": "<actionable advice|empty>",
+  "escalation_reasoning": "<reasoning|empty>"
+}
+"""
+
+async def run_sos_triage_agent(chat_history: list[dict]) -> SOSTriageResult:
+    try:
+        # Format history into a readable string for the prompt
+        formatted_history = "CONVERSATION HISTORY:\n"
+        for msg in chat_history:
+            formatted_history += f"[{msg['role'].upper()}]: {msg['content']}\n"
+        
+        user_prompt = f"{formatted_history}\n\nAssess the conversation and provide the triage response."
+        result = await _call_groq(SOS_TRIAGE_PROMPT, user_prompt, max_tokens=300)
+        return SOSTriageResult(**result)
+    except Exception as e:
+        print(f"[SOSTriage] Agent failed: {e}")
+        return SOSTriageResult(
+            is_complete=True,
+            next_response="System error. Escalating immediately.",
+            threat_level="critical",
+            suggested_action="Please contact emergency services (999) immediately.",
+            escalation_reasoning="System failure during triage processing."
+        )
