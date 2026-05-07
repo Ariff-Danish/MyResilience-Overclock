@@ -201,14 +201,27 @@ async def health_check():
         except Exception:
             pass
 
-    # Check Supabase connectivity
+    # Check Supabase connectivity via lightweight HTTP (avoids SDK WebSocket issues in serverless)
     db_status = "not_configured"
     try:
-        from app.db.client import get_supabase_admin
-        db = get_supabase_admin()
-        # Simple connectivity check
-        db.table("profiles").select("id", count="exact").limit(1).execute()
-        db_status = "connected"
+        supabase_url = os.getenv("SUPABASE_URL", "")
+        supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+        if supabase_url and supabase_key:
+            import httpx
+            resp = httpx.get(
+                f"{supabase_url}/rest/v1/profiles?select=id&limit=1",
+                headers={
+                    "apikey": supabase_key,
+                    "Authorization": f"Bearer {supabase_key}",
+                },
+                timeout=5.0,
+            )
+            if resp.status_code == 200:
+                db_status = "connected"
+            else:
+                db_status = f"error: HTTP {resp.status_code} — {resp.text[:80]}"
+        else:
+            db_status = "not_configured"
     except Exception as e:
         db_status = f"error: {str(e)[:100]}"
 
