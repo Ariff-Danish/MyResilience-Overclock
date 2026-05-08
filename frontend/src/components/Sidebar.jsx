@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom'
 import {
   Activity, ShieldAlert, PackageSearch, Users, Radar, Map,
-  BookOpen, Settings, User, LogOut, ChevronLeft, Menu, Shield
+  BookOpen, Settings, User, LogOut, ChevronLeft, Menu, Shield, Bot
 } from 'lucide-react'
 import { useAuth } from '../lib/AuthContext'
 
@@ -10,8 +10,7 @@ const NAV_ITEMS = [
   { id: 'inventory', label: 'Inventory', icon: PackageSearch },
   { id: 'team', label: 'Personnel', icon: Users },
   { id: 'activity', label: 'Activity Network', icon: Activity },
-  { id: 'agents', label: 'Agents', icon: null, emoji: '🤖' },
-  { id: 'briefing', label: 'Briefing', icon: null, emoji: '📋' },
+  { id: 'agents', label: 'Autonomous Agents', icon: Bot },
   { id: 'threatmap', label: 'Threat Map', icon: Map },
   { id: 'survival', label: 'Survival Guide', icon: BookOpen },
   { id: 'settings', label: 'Settings', icon: Settings },
