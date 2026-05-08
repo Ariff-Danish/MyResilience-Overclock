@@ -1289,6 +1289,17 @@ function App() {
                 )}
               </div>
               <p className="text-muted" style={{ fontSize: '0.85rem' }}>{inventoryAnalysis.summary}</p>
+              {inventoryAnalysis.reasoning && (
+                <details style={{ marginTop: '0.4rem', fontSize: '0.72rem', color: 'var(--muted)' }}>
+                  <summary style={{ cursor: 'pointer', fontWeight: '600', color: 'var(--info)' }}>📐 Verification — Show AI Arithmetic</summary>
+                  <p style={{ margin: '0.3rem 0 0', padding: '0.4rem 0.6rem', background: 'rgba(56,189,248,0.05)', borderRadius: '6px', lineHeight: '1.5' }}>
+                    {inventoryAnalysis.reasoning}
+                  </p>
+                  <p style={{ margin: '0.25rem 0 0', fontSize: '0.65rem', opacity: 0.7 }}>
+                    Sources: Your inventory data ({inventory.length} items) · Household size ({team.filter(m => m.role === 'family').length || 1}) · Groq Llama-3.3 70B
+                  </p>
+                </details>
+              )}
               {inventoryAnalysis.critical_gaps.length > 0 && (
                 <div className="gaps-row">
                   <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: 'var(--warning)' }}>⚠ GAPS:</span>
@@ -2060,6 +2071,12 @@ function App() {
             <div className="panel">
               <h4>🧠 Advisor Reasoning</h4>
               <p className="text-muted" style={{ fontSize: '0.85rem', lineHeight: '1.6' }}>{evacAdvisory.reasoning}</p>
+              <div style={{ marginTop: '0.5rem', padding: '0.4rem 0.6rem', background: 'rgba(34,197,94,0.06)', borderRadius: '6px', fontSize: '0.7rem', color: 'var(--muted)' }}>
+                <strong style={{ color: 'var(--primary)' }}>Data Sources:</strong> MET Malaysia (api.data.gov.my) · OpenStreetMap Nominatim · Groq Llama-3.3 70B · Haversine proximity calculation
+                {evacAdvisory.shelter_locations?.length > 0 && (
+                  <span> · {evacAdvisory.shelter_locations.length} locations verified via reverse geocoding</span>
+                )}
+              </div>
             </div>
           </div>
 

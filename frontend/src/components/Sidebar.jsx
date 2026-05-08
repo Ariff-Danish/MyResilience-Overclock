@@ -63,36 +63,38 @@ export default function Sidebar({ activeTab, setActiveTab, isOpen, onToggle }) {
       </nav>
 
       {/* Auth User Menu */}
-      {isOpen && supabaseReady && (
+      {supabaseReady && (
         <div className="sidebar-user-menu">
           {isAuthenticated ? (
             <>
-              <div className="sidebar-user-info">
-                <div className="sidebar-user-avatar">
-                  {(user?.user_metadata?.full_name || user?.email || 'U').charAt(0).toUpperCase()}
+              {isOpen && (
+                <div className="sidebar-user-info">
+                  <div className="sidebar-user-avatar">
+                    {(user?.user_metadata?.full_name || user?.email || 'U').charAt(0).toUpperCase()}
+                  </div>
+                  <div className="sidebar-user-details">
+                    <span className="sidebar-user-name">
+                      {user?.user_metadata?.full_name || 'User'}
+                    </span>
+                    <span className="sidebar-user-email">{user?.email}</span>
+                  </div>
                 </div>
-                <div className="sidebar-user-details">
-                  <span className="sidebar-user-name">
-                    {user?.user_metadata?.full_name || 'User'}
-                  </span>
-                  <span className="sidebar-user-email">{user?.email}</span>
-                </div>
-              </div>
+              )}
               <div className="sidebar-user-actions">
-                <Link to="/profile" className="sidebar-user-link">
-                  <User className="nav-icon" /> Profile
+                <Link to="/profile" className="sidebar-user-link" title="Profile">
+                  <User className="nav-icon" /> {isOpen && 'Profile'}
                 </Link>
-                <Link to="/dependents" className="sidebar-user-link">
-                  <Users className="nav-icon" /> Dependents
+                <Link to="/dependents" className="sidebar-user-link" title="Dependents">
+                  <Users className="nav-icon" /> {isOpen && 'Dependents'}
                 </Link>
-                <button className="sidebar-user-link sidebar-signout" onClick={signOut}>
-                  <LogOut className="nav-icon" /> Sign Out
+                <button className="sidebar-user-link sidebar-signout" onClick={signOut} title="Sign Out">
+                  <LogOut className="nav-icon" /> {isOpen && 'Sign Out'}
                 </button>
               </div>
             </>
           ) : (
-            <Link to="/login" className="sidebar-login-link">
-              <User className="nav-icon" /> Sign In
+            <Link to="/login" className="sidebar-login-link" title="Sign In">
+              <User className="nav-icon" /> {isOpen && 'Sign In'}
             </Link>
           )}
         </div>
