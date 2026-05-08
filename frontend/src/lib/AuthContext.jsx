@@ -90,6 +90,7 @@ export function AuthProvider({ children }) {
       password,
       options: {
         data: metadata, // full_name, etc.
+        emailRedirectTo: window.location.origin,
       },
     })
 

@@ -10,8 +10,8 @@
 [![Vercel](https://img.shields.io/badge/Deployed-Vercel-black?logo=vercel)](https://vercel.com)
 
 **🌐 Live Production Endpoints:**
-- **Frontend Dashboard:** [https://myresilience-overclock-web.vercel.app](https://myresilience-overclock-web.vercel.app)
-- **Backend API:** [https://myresilience-overclock-api.vercel.app](https://myresilience-overclock-api.vercel.app)
+- **Frontend Dashboard:** [https://frontend-tan-pi-28.vercel.app](https://frontend-tan-pi-28.vercel.app)
+- **Backend API:** [https://backend-delta-ivory-13.vercel.app](https://backend-delta-ivory-13.vercel.app)
 
 ---
 
