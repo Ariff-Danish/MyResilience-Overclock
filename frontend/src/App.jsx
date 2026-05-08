@@ -179,9 +179,7 @@ function App() {
   // Agent System State
   const [agentStatus, setAgentStatus] = useState(null)
   const [agentEvents, setAgentEvents] = useState([])
-  const [agentBriefing, setAgentBriefing] = useState(null)
   const [agentConnected, setAgentConnected] = useState(false)
-  const [briefingLoading, setBriefingLoading] = useState(false)
 
   // Scanner State
   const [showIDScanner, setShowIDScanner] = useState(false)
@@ -1026,7 +1024,7 @@ function App() {
       <div className="dash-header">
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
           <h2>⚡ COMMAND DASHBOARD</h2>
-          <span className="header-status-badge">
+          <span className={`header-status-badge ${liveWeather?.alerts?.length > 0 ? 'threat' : ''}`}>
             {liveWeather?.alerts?.length > 0 ? '🔴 THREAT ACTIVE' : '🟢 NOMINAL'}
           </span>
         </div>
@@ -1482,22 +1480,7 @@ function App() {
           </div>
         )}
 
-        {/* ── Why Malaysia Impact Banner ── */}
-        <div style={{
-          background: 'rgba(56,189,248,0.04)', border: '1px solid rgba(56,189,248,0.12)',
-          borderRadius: '10px', padding: '0.75rem 1rem', marginTop: '1rem',
-          display: 'flex', alignItems: 'center', gap: '0.75rem', fontSize: '0.75rem',
-          color: 'var(--muted)', flexWrap: 'wrap'
-        }}>
-          <span style={{ fontSize: '1rem' }}>🇲🇾</span>
-          <span>Built for Malaysian flood, haze, thunderstorm & landslide risk</span>
-          <span style={{ opacity: 0.4 }}>·</span>
-          <span>MET Malaysia live data</span>
-          <span style={{ opacity: 0.4 }}>·</span>
-          <span>Zero personal data stored</span>
-          <span style={{ opacity: 0.4 }}>·</span>
-          <span>Families · NGOs · Community Centres</span>
-        </div>
+
       </div>
     </div>
   )
@@ -2409,21 +2392,6 @@ function App() {
     const agents = Object.entries(agentsObj).map(([id, data]) => ({ id, ...data }))
     const orchestratorStatus = agentStatus?.orchestrator?.status || 'unknown'
 
-    const handleGenerateBriefing = async () => {
-      setBriefingLoading(true)
-      try {
-        const res = await fetch(`${API_URL}/api/agents/briefing`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ type: 'on_demand' }),
-        })
-        const data = await res.json()
-        setAgentBriefing(data)
-      } catch (err) {
-        setAgentBriefing({ error: err.message })
-      }
-      setBriefingLoading(false)
-    }
 
     return (
       <div className="tab-pane animate-fade-in">
@@ -2460,17 +2428,7 @@ function App() {
               </div>
             </div>
           </div>
-          <div className="agent-overview-card">
-            <div className="overview-icon">📋</div>
-            <div>
-              <div className="overview-label">Briefing</div>
-              <div className="overview-value">
-                <button className="agent-generate-btn" onClick={handleGenerateBriefing} disabled={briefingLoading}>
-                  {briefingLoading ? '⏳ Generating...' : '📋 Generate Briefing'}
-                </button>
-              </div>
-            </div>
-          </div>
+
         </div>
 
         {/* Agent Status Cards */}
@@ -2529,27 +2487,10 @@ function App() {
           </div>
         )}
 
-        {/* Latest Briefing */}
-        {agentBriefing && !agentBriefing.error && (
-          <div className="agent-briefing-card">
-            <h3>📋 Latest Briefing</h3>
-            <div className="agent-briefing-content">
-              {agentBriefing.summary || agentBriefing.content || JSON.stringify(agentBriefing, null, 2)}
-            </div>
-            {agentBriefing.generated_at && (
-              <div className="agent-briefing-meta">
-                <span>Generated: {new Date(agentBriefing.generated_at).toLocaleString()}</span>
-                {agentBriefing.threat_level && <span>Threat Level: {agentBriefing.threat_level}</span>}
-              </div>
-            )}
-          </div>
-        )}
-        {agentBriefing?.error && (
-          <div className="agent-briefing-card" style={{ borderLeftColor: 'var(--danger)' }}>
-            <h3 style={{ color: 'var(--danger)' }}>⚠️ Briefing Error</h3>
-            <div className="agent-briefing-content">{agentBriefing.error}</div>
-          </div>
-        )}
+        {/* Automated Briefing System */}
+        <div style={{ marginTop: '3rem' }}>
+          <BriefingViewer />
+        </div>
 
         {/* Recent Events Feed */}
         <div className="agent-events-feed">
@@ -2744,7 +2685,6 @@ function App() {
         {activeTab === 'team' && renderTeam()}
         {activeTab === 'activity' && renderActivity()}
         {activeTab === 'agents' && renderAgents()}
-        {activeTab === 'briefing' && <BriefingViewer />}
         {activeTab === 'threatmap' && renderThreatMap()}
         {activeTab === 'survival' && renderSurvivalGuide()}
         {activeTab === 'settings' && renderSettings()}

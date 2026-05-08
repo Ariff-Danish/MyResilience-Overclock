@@ -746,7 +746,7 @@ input:checked + .slider:before { transform: translateX(26px); background-color: 
   color: var(--primary);
   text-transform: uppercase;
 }
-.header-status-badge:has-text('THREAT') {
+.header-status-badge.threat {
   background: rgba(244,63,94,0.1);
   border-color: rgba(244,63,94,0.3);
   color: var(--danger);
