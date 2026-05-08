@@ -179,6 +179,7 @@ body {
 .nav-icon {
   width: 20px;
   height: 20px;
+  flex-shrink: 0;
 }
 
 .main-content {
@@ -856,6 +857,13 @@ input:checked + .slider:before { transform: translateX(26px); background-color: 
 /* Sidebar Collapsed State */
 .sidebar.closed { width: 64px; }
 .sidebar-nav { flex: 1; }
+
+.sidebar.closed .sidebar-nav button,
+.sidebar.closed .sidebar-user-link,
+.sidebar.closed .sidebar-login-link {
+  padding: 0.7rem 0;
+  justify-content: center;
+}
 
 .sidebar-toggle-btn {
   display: flex;
