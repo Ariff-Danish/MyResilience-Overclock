@@ -9,7 +9,7 @@ const SEVERITY_CONFIG = {
   success:   { icon: ShieldCheck,    color: '#22c55e', bg: 'rgba(34,197,94,0.12)', border: 'rgba(34,197,94,0.3)', label: 'OK' },
 }
 
-function Toast({ id, severity, title, message, onDismiss, autoDismissMs = 8000 }) {
+function Toast({ id, severity, title, message, onDismiss, autoDismissMs = 5000 }) {
   const config = SEVERITY_CONFIG[severity] || SEVERITY_CONFIG.info
   const Icon = config.icon
 
@@ -67,9 +67,9 @@ export function useNotifications() {
   const addToast = useCallback((severity, title, message = '') => {
     const id = Date.now() + Math.random()
     setToasts(prev => {
-      // Keep max 5 toasts
+      // Keep max 3 toasts to prevent screen clutter
       const next = [...prev, { id, severity, title, message }]
-      return next.slice(-5)
+      return next.slice(-3)
     })
     return id
   }, [])

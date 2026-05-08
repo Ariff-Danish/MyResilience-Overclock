@@ -2108,7 +2108,7 @@ function App() {
     <div className="tab-pane animate-fade-in">
       <h2>Preferences & Configuration</h2>
 
-      <div className="panel mb-4" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+      <div className="panel mb-4" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', maxWidth: '640px' }}>
         <div>
           <h3>📍 Location Services</h3>
           <p className="text-muted" style={{ fontSize: '0.85rem', marginBottom: '1rem' }}>
