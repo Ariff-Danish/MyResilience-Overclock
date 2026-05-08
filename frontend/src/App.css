@@ -257,7 +257,7 @@ h3 {
   gap: 0.5rem;
 }
 
-input, select {
+input:not([type="checkbox"]), select {
   flex: 1;
   min-width: 120px;
   background-color: #0d1117;
@@ -1997,8 +1997,8 @@ body::before {
 
 .distress-fab {
   position: fixed;
-  bottom: 2rem;
-  right: 2rem;
+  bottom: 24px;
+  right: 24px;
   z-index: 9999;
   width: 60px;
   height: 60px;
@@ -4331,8 +4331,8 @@ body::before {
 
 .chatbot-toggle {
   position: fixed;
-  bottom: 24px;
-  right: 90px;
+  bottom: 96px;
+  right: 28px;
   width: 52px;
   height: 52px;
   border-radius: 50%;
@@ -4521,5 +4521,5 @@ body::before {
     bottom: 76px;
     max-height: 400px;
   }
-  .chatbot-toggle { bottom: 16px; right: 76px; width: 46px; height: 46px; }
+  .chatbot-toggle { bottom: 94px; right: 31px; width: 46px; height: 46px; }
 }
