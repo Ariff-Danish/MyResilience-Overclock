@@ -9,9 +9,8 @@ const NAV_ITEMS = [
   { id: 'dashboard', label: 'Dashboard', icon: Radar },
   { id: 'inventory', label: 'Inventory', icon: PackageSearch },
   { id: 'team', label: 'Personnel', icon: Users },
-  { id: 'activity', label: 'Activity Network', icon: Activity },
-  { id: 'agents', label: 'Autonomous Agents', icon: Bot },
   { id: 'threatmap', label: 'Threat Map', icon: Map },
+  { id: 'agents', label: 'Agents', icon: null, emoji: '🤖' },
   { id: 'survival', label: 'Survival Guide', icon: BookOpen },
   { id: 'settings', label: 'Settings', icon: Settings },
 ]
