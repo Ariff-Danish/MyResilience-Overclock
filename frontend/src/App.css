@@ -4332,7 +4332,7 @@ body::before {
 .chatbot-toggle {
   position: fixed;
   bottom: 24px;
-  right: 24px;
+  right: 90px;
   width: 52px;
   height: 52px;
   border-radius: 50%;
@@ -4364,7 +4364,7 @@ body::before {
 .chatbot-window {
   position: fixed;
   bottom: 88px;
-  right: 24px;
+  right: 90px;
   width: 360px;
   max-height: 460px;
   background: var(--panel-bg, #1a1a2e);
@@ -4521,5 +4521,5 @@ body::before {
     bottom: 76px;
     max-height: 400px;
   }
-  .chatbot-toggle { bottom: 16px; right: 16px; width: 46px; height: 46px; }
+  .chatbot-toggle { bottom: 16px; right: 76px; width: 46px; height: 46px; }
 }
