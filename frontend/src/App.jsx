@@ -2682,8 +2682,14 @@ function App() {
       {/* ════════ AI CHATBOT WIDGET (Global) ════════ */}
       <ChatbotWidget
         inventory={inventory}
+        team={team}
         threatStatus={recentAlert?.threat_level || liveWeather?.status || 'clear'}
         readinessScore={inventoryAnalysis?.readiness_score}
+        liveWeather={liveWeather}
+        metWarnings={recentAlert?.met_warnings}
+        pacePlan={pacePlan}
+        recentAlert={recentAlert}
+        locationName={recentAlert?.location || 'Malaysia'}
       />
     </div>
   )

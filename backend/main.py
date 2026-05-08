@@ -239,12 +239,14 @@ async def health_check():
 @app.get("/api/config")
 async def get_public_config():
     """Public configuration for the frontend (non-sensitive)."""
+    supa_url = os.getenv("SUPABASE_URL", "").strip().strip("\ufeff")
+    supa_anon = os.getenv("SUPABASE_ANON_KEY", "").strip().strip("\ufeff")
     return {
-        "supabase_url": os.getenv("SUPABASE_URL", ""),
-        "supabase_anon_key": os.getenv("SUPABASE_ANON_KEY", ""),
+        "supabase_url": supa_url,
+        "supabase_anon_key": supa_anon,
         "version": "4.0.0",
         "features": {
-            "auth_enabled": bool(os.getenv("SUPABASE_URL")),
+            "auth_enabled": bool(supa_url),
             "agents_enabled": True,
             "email_alerts": bool(os.getenv("GMAIL_ADDRESS")),
             "sms_alerts": bool(os.getenv("TWILIO_ACCOUNT_SID")),

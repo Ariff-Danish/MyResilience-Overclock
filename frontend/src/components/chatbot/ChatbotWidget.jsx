@@ -1,28 +1,64 @@
 import { useState, useRef, useEffect } from 'react'
-import { MessageCircle, X, Send, Bot, User, Loader2 } from 'lucide-react'
+import { MessageCircle, X, Send, Bot, User, Loader2, AlertTriangle, Shield } from 'lucide-react'
 import { api } from '../../lib/api'
 
 /**
- * ChatbotWidget — Floating AI chatbot for inventory queries and app navigation.
- * Supports multi-turn conversation with context-aware responses.
+ * ChatbotWidget — Situationally-aware AI assistant for disaster preparedness.
+ * Adapts suggestions and behavior based on current threat level, weather, and inventory.
  */
-export default function ChatbotWidget({ inventory, threatStatus, readinessScore }) {
+export default function ChatbotWidget({
+  inventory,
+  team,
+  threatStatus,
+  readinessScore,
+  liveWeather,
+  metWarnings,
+  pacePlan,
+  recentAlert,
+  locationName,
+}) {
   const [isOpen, setIsOpen] = useState(false)
-  const [messages, setMessages] = useState([
-    {
-      role: 'assistant',
-      content: 'Hello! I\'m your MyResilience AI assistant. 🛡️ How can I help you today? You can ask about your inventory, navigation, or disaster preparedness.',
-      suggestions: [
-        'How do I add inventory items?',
-        'What supplies should I prepare?',
-        'How does voice command work?',
-      ],
-    },
-  ])
+  const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const messagesEndRef = useRef(null)
   const inputRef = useRef(null)
+
+  // Generate welcome message based on current situation
+  useEffect(() => {
+    const threat = (threatStatus || '').toLowerCase()
+    let welcomeMsg = ''
+    let welcomeSuggestions = []
+
+    if (threat.includes('red') || threat.includes('danger') || threat.includes('severe')) {
+      welcomeMsg = '🚨 ACTIVE THREAT DETECTED. I\'m monitoring the situation. How can I help you stay safe?'
+      welcomeSuggestions = [
+        'What should I do right now?',
+        'Show evacuation routes',
+        'Send SOS to my contacts',
+      ]
+    } else if (threat.includes('elevated') || threat.includes('warning')) {
+      welcomeMsg = '⚠️ Weather advisory active in your area. I\'m here to help you prepare. What do you need?'
+      welcomeSuggestions = [
+        'What should I prepare?',
+        'Check my supply readiness',
+        'Show nearby shelters',
+      ]
+    } else {
+      welcomeMsg = 'Hello! I\'m your MyResilience AI assistant. 🛡️ I can help with inventory, weather updates, evacuation plans, and disaster preparedness.'
+      welcomeSuggestions = [
+        'How prepared am I?',
+        'What\'s the weather situation?',
+        'How do I use voice commands?',
+      ]
+    }
+
+    setMessages([{
+      role: 'assistant',
+      content: welcomeMsg,
+      suggestions: welcomeSuggestions,
+    }])
+  }, [threatStatus])
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {
@@ -35,6 +71,70 @@ export default function ChatbotWidget({ inventory, threatStatus, readinessScore 
       setTimeout(() => inputRef.current?.focus(), 100)
     }
   }, [isOpen])
+
+  // Build rich context from all available app state
+  const buildContext = () => {
+    const ctx = {}
+
+    if (inventory?.length) {
+      ctx.inventory = inventory.map(item => ({
+        name: item.name,
+        current_amount: item.current_amount,
+        target_amount: item.target_amount,
+        category: item.category,
+        unit: item.unit,
+        expiry_date: item.expiry_date,
+      }))
+    }
+
+    if (team?.length) {
+      ctx.team = team.map(m => ({
+        name: m.name,
+        role: m.role,
+        age: m.age,
+        email: m.email,
+        phone: m.phone,
+      }))
+    }
+
+    if (threatStatus) ctx.threat_status = threatStatus
+    if (readinessScore != null) ctx.readiness_score = readinessScore
+    if (locationName) ctx.location = locationName
+
+    // Live weather data
+    if (liveWeather) {
+      ctx.weather = {
+        location: liveWeather.location || locationName || 'Malaysia',
+        condition: liveWeather.forecast || liveWeather.condition || '',
+        temperature: liveWeather.max_temp ? `${liveWeather.max_temp}°C max / ${liveWeather.min_temp}°C min` : '',
+      }
+    }
+
+    // MET warnings
+    if (metWarnings?.length) {
+      ctx.met_warnings = metWarnings.map(w => ({
+        heading: w.heading || w.title || 'Active warning',
+        valid: w.valid_from || '',
+      }))
+    }
+
+    // PACE plan
+    if (pacePlan) {
+      ctx.pace = {
+        primary: pacePlan.primary || '',
+        alternate: pacePlan.alternate || '',
+        contingency: pacePlan.contingency || '',
+        emergency: pacePlan.emergency || '',
+      }
+    }
+
+    // Recent alert context
+    if (recentAlert) {
+      ctx.threat_status = recentAlert.threat_level || threatStatus || 'nominal'
+    }
+
+    return ctx
+  }
 
   const sendMessage = async (text) => {
     if (!text.trim() || loading) return
@@ -51,18 +151,7 @@ export default function ChatbotWidget({ inventory, threatStatus, readinessScore 
         .map(m => ({ role: m.role, content: m.content }))
         .slice(-10)
 
-      // Build context from current app state
-      const context = {}
-      if (inventory?.length) {
-        context.inventory = inventory.map(item => ({
-          name: item.name,
-          current_amount: item.current_amount,
-          target_amount: item.target_amount,
-          category: item.category,
-        }))
-      }
-      if (threatStatus) context.threat_status = threatStatus
-      if (readinessScore != null) context.readiness_score = readinessScore
+      const context = buildContext()
 
       const data = await api.post('/api/chatbot/message', {
         message: text.trim(),
@@ -80,12 +169,18 @@ export default function ChatbotWidget({ inventory, threatStatus, readinessScore 
         },
       ])
     } catch (err) {
+      const errorMsg = err.message?.includes('401') || err.message?.includes('Authentication')
+        ? 'I\'m available without sign-in for general guidance. For personalized inventory analysis, please sign in first.'
+        : err.message?.includes('429')
+        ? 'I\'m getting a lot of requests right now. Please try again in a moment. 🙏'
+        : 'Sorry, I encountered an error. Please try again.'
+
       setMessages(prev => [
         ...prev,
         {
           role: 'assistant',
-          content: 'Sorry, I encountered an error. Please try again.',
-          suggestions: [],
+          content: errorMsg,
+          suggestions: ['What can you help me with?', 'Show me the Survival Guide'],
         },
       ])
     } finally {
@@ -109,27 +204,35 @@ export default function ChatbotWidget({ inventory, threatStatus, readinessScore 
     }
   }
 
+  // Determine button urgency indicator
+  const threat = (threatStatus || '').toLowerCase()
+  const isUrgent = threat.includes('red') || threat.includes('danger') || threat.includes('severe')
+  const isWarning = threat.includes('elevated') || threat.includes('warning')
+
   return (
     <>
       {/* Floating Toggle Button */}
       <button
-        className="chatbot-toggle"
+        className={`chatbot-toggle ${isUrgent ? 'chatbot-toggle-urgent' : isWarning ? 'chatbot-toggle-warning' : ''}`}
         onClick={() => setIsOpen(!isOpen)}
         title={isOpen ? 'Close chat' : 'Open AI assistant'}
         aria-label={isOpen ? 'Close chat' : 'Open AI assistant'}
       >
         {isOpen ? <X size={24} /> : <MessageCircle size={24} />}
+        {(isUrgent || isWarning) && !isOpen && (
+          <span className="chatbot-toggle-badge" />
+        )}
       </button>
 
       {/* Chat Window */}
       {isOpen && (
         <div className="chatbot-window">
           {/* Header */}
-          <div className="chatbot-header">
+          <div className={`chatbot-header ${isUrgent ? 'chatbot-header-urgent' : isWarning ? 'chatbot-header-warning' : ''}`}>
             <div className="chatbot-header-info">
-              <Bot size={20} />
+              {isUrgent ? <AlertTriangle size={20} /> : <Bot size={20} />}
               <span>MyResilience AI</span>
-              <span className="chatbot-status-dot" />
+              <span className={`chatbot-status-dot ${isUrgent ? 'urgent' : isWarning ? 'warning' : ''}`} />
             </div>
             <button className="chatbot-close" onClick={() => setIsOpen(false)}>
               <X size={18} />
@@ -172,7 +275,7 @@ export default function ChatbotWidget({ inventory, threatStatus, readinessScore 
                 </div>
                 <div className="chatbot-bubble chatbot-typing">
                   <Loader2 className="chatbot-spinner" size={16} />
-                  <span>Thinking...</span>
+                  <span>Analyzing situation...</span>
                 </div>
               </div>
             )}
@@ -188,7 +291,7 @@ export default function ChatbotWidget({ inventory, threatStatus, readinessScore 
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Ask me anything..."
+              placeholder={isUrgent ? 'Ask about safety actions...' : 'Ask me anything...'}
               disabled={loading}
               maxLength={2000}
             />
