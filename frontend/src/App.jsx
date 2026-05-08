@@ -1480,19 +1480,7 @@ function App() {
           </div>
         )}
 
-        {/* ── Malaysia Impact Footer ── */}
-        <div style={{
-          textAlign: 'center', padding: '1rem', marginTop: '1rem',
-          fontSize: '0.78rem', color: 'var(--muted)', lineHeight: '1.6',
-          borderTop: '1px solid rgba(255,255,255,0.05)'
-        }}>
-          <p style={{ margin: 0 }}>
-            🇲🇾 Built for Malaysian flood, haze, thunderstorm & landslide risk
-          </p>
-          <p style={{ margin: '0.25rem 0 0', fontSize: '0.7rem', opacity: 0.7 }}>
-            MET Malaysia live data · Zero personal data stored · For families, NGOs & community centres
-          </p>
-        </div>
+
       </div>
     </div>
   )
