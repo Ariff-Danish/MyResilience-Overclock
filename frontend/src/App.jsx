@@ -262,6 +262,25 @@ function App() {
     }
   }, [])
 
+  // Sync inventory/team to autonomous agent system (so Guardian can analyze)
+  useEffect(() => {
+    const syncToAgents = async () => {
+      try {
+        await fetch(`${API_URL}/api/agents/configure`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            inventory: inventory.map(i => ({ name: i.name, category: i.category, current_amount: i.current_amount, target_amount: i.target_amount, unit: i.unit, expiry_date: i.expiry_date })),
+            team: team.map(m => ({ name: m.name, role: m.role, age: m.age })),
+            location_name: userRegionDisplay || 'Petaling',
+            demo: demoMode,
+          }),
+        })
+      } catch { /* silent — best effort */ }
+    }
+    syncToAgents()
+  }, [inventory, team, demoMode])
+
   // Fetch agent events when Agents tab is active
   useEffect(() => {
     if (activeTab !== 'agents') return

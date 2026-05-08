@@ -50,28 +50,42 @@ async def get_agent_status():
         from app.agents.autonomous.orchestrator import orchestrator
         return orchestrator.get_full_status()
 
-    # Serverless: do a live lightweight check
+    # Serverless: run ALL agents on every status check (autonomous behavior)
     from app.agents.autonomous.state import get_all_agent_status, get_recent_events, get_shared_state
 
-    # Try to get persisted state first (warm start may have it)
+    # Always run agents — they are autonomous and should work on every invocation
+    # Agent 1: Sentinel — weather monitoring
+    try:
+        from app.agents.autonomous.sentinel import sentinel
+        await sentinel._check_weather()
+    except Exception:
+        pass
+
+    # Agent 2: Escalator — threat scoring
+    try:
+        from app.agents.autonomous.escalator import escalator
+        await escalator._evaluate_situation()
+    except Exception:
+        pass
+
+    # Agent 3: Guardian — inventory health (runs if inventory data exists in shared state)
+    try:
+        from app.agents.autonomous.guardian import guardian
+        await guardian._check_inventory_health()
+    except Exception:
+        pass
+
+    # Agent 4: Briefing — status update (lightweight, no LLM call on status check)
+    try:
+        from app.agents.autonomous.state import update_agent_status
+        update_agent_status("briefing", "standby", {
+            "message": "Ready for on-demand generation",
+            "last_available": datetime.utcnow().isoformat() + "Z",
+        })
+    except Exception:
+        pass
+
     all_status = get_all_agent_status()
-    has_data = any(s.get("status") not in (None, "unknown") for s in all_status.values())
-
-    if not has_data:
-        # Cold start — run a quick live check
-        try:
-            from app.agents.autonomous.sentinel import sentinel
-            await sentinel._check_weather()
-        except Exception:
-            pass
-
-        try:
-            from app.agents.autonomous.escalator import escalator
-            await escalator._evaluate_situation()
-        except Exception:
-            pass
-
-        all_status = get_all_agent_status()
 
     return {
         "type": "agent_status",
@@ -134,23 +148,47 @@ class AgentConfigRequest(BaseModel):
 
 @router.post("/configure")
 async def configure_agents(req: AgentConfigRequest):
-    """Update agent configuration (location, inventory, team)."""
-    from app.agents.autonomous.orchestrator import orchestrator
+    """Update agent configuration (location, inventory, team).
+    
+    In serverless mode, stores directly in shared state for Guardian agent.
+    In long-running mode, delegates to orchestrator.
+    """
+    import os
+    from app.agents.autonomous.state import update_shared_state, log_event
 
-    orchestrator.configure_sentinel(
-        user_lat=req.user_lat,
-        user_lng=req.user_lng,
-        location_name=req.location_name,
-        demo=req.demo,
-    )
+    IS_SERVERLESS = bool(os.getenv("VERCEL") or os.getenv("AWS_LAMBDA_FUNCTION_NAME"))
 
-    if req.inventory is not None:
-        orchestrator.update_inventory(req.inventory)
+    if IS_SERVERLESS:
+        # Store directly in shared state for serverless agents
+        if req.inventory is not None:
+            update_shared_state("inventory", req.inventory)
+        if req.team is not None:
+            update_shared_state("team", req.team)
+        update_shared_state("user_location", {
+            "lat": req.user_lat,
+            "lng": req.user_lng,
+            "name": req.location_name,
+        })
+        update_shared_state("demo_mode", req.demo)
+        log_event("orchestrator", "configured", {
+            "location": req.location_name,
+            "inventory_items": len(req.inventory) if req.inventory else 0,
+            "team_members": len(req.team) if req.team else 0,
+        })
+    else:
+        from app.agents.autonomous.orchestrator import orchestrator
+        orchestrator.configure_sentinel(
+            user_lat=req.user_lat,
+            user_lng=req.user_lng,
+            location_name=req.location_name,
+            demo=req.demo,
+        )
+        if req.inventory is not None:
+            orchestrator.update_inventory(req.inventory)
+        if req.team is not None:
+            orchestrator.update_team(req.team)
 
-    if req.team is not None:
-        orchestrator.update_team(req.team)
-
-    return {"status": "configured", "location": req.location_name}
+    return {"status": "configured", "location": req.location_name, "agents_synced": 4}
 
 
 # ── WebSocket Endpoint ────────────────────────────────────────────────────────

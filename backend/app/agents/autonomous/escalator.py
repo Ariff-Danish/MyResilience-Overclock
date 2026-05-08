@@ -218,9 +218,22 @@ class EscalationEngine:
 
         self._last_escalation_level = level
 
+        # Clear status summary for users
+        if score == 0:
+            status_summary = "✅ ALL CLEAR — No threats, household safe"
+        elif level == "info":
+            status_summary = f"ℹ️ LOW RISK (Score: {round(score)}/100) — Monitor situation"
+        elif level == "warning":
+            status_summary = f"⚠️ WARNING (Score: {round(score)}/100) — Prepare for potential threat"
+        elif level == "critical":
+            status_summary = f"🔴 CRITICAL (Score: {round(score)}/100) — Immediate action required"
+        else:
+            status_summary = f"🚨 EMERGENCY (Score: {round(score)}/100) — Evacuate NOW"
+
         update_agent_status(self.AGENT_NAME, "monitoring", {
             "score": round(score),
             "level": level,
+            "status_summary": status_summary,
             "factors": factors,
             "actions": actions_taken,
             "last_eval": datetime.utcnow().isoformat() + "Z",

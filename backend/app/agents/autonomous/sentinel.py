@@ -197,14 +197,23 @@ class SentinelAgent:
 
         elif not nearby_alerts:
             self._last_threat_hash = ""
+            log_event(self.AGENT_NAME, "all_clear", {
+                "message": "No nearby threats detected — area is SAFE",
+                "distant_alerts": len(distant_alerts),
+                "weather": weather_summary,
+            })
 
-        update_agent_status(self.AGENT_NAME, "monitoring", {
+        # Status reflects actual safety level
+        status_details = {
             "threats": len(nearby_alerts),
             "distant": len(distant_alerts),
             "weather": weather_summary,
             "temp": temp,
+            "status_summary": f"{'⚠️ ' + str(len(nearby_alerts)) + ' ACTIVE THREAT(S)' if nearby_alerts else '✅ SAFE — No nearby threats'}{' | ' + str(len(distant_alerts)) + ' distant' if distant_alerts else ''}",
             "last_check": datetime.utcnow().isoformat() + "Z",
-        })
+            "data_source": "MET Malaysia (api.data.gov.my)",
+        }
+        update_agent_status(self.AGENT_NAME, "monitoring", status_details)
 
     async def _trigger_autonomous_evacuation(self, primary_alert: dict, all_alerts: list):
         """Autonomously generate evacuation advisory when threats detected."""
