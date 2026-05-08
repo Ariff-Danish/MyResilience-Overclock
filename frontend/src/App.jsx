@@ -2360,10 +2360,30 @@ function App() {
 
   const renderAgents = () => {
     const AGENT_META = {
-      sentinel: { emoji: '🛡️', name: 'Sentinel', color: 'var(--primary)' },
-      guardian: { emoji: '📦', name: 'Guardian', color: 'var(--info)' },
-      escalator: { emoji: '⚡', name: 'Escalator', color: 'var(--warning)' },
-      briefing: { emoji: '📋', name: 'Briefing', color: 'var(--cyan)' },
+      sentinel: {
+        emoji: '🛡️', name: 'Sentinel', color: 'var(--primary)',
+        role: 'Threat Detection & Weather Monitoring',
+        desc: 'Continuously monitors MET Malaysia weather data, detects nearby threats using Haversine proximity filtering, and triggers evacuation advisories when danger is imminent.',
+        metrics_explain: { threats: 'Active weather threats in your area', distant: 'Threats in other regions (not affecting you)', weather: 'Current MET Malaysia condition', temp: 'Temperature (°C)', last_check: 'Last data sync from MET Malaysia' }
+      },
+      guardian: {
+        emoji: '📦', name: 'Guardian', color: 'var(--info)',
+        role: 'Inventory Health & Supply Monitoring',
+        desc: 'Tracks household supply levels, flags expired items, calculates survival windows, and recommends restocking priorities based on family size.',
+        metrics_explain: {}
+      },
+      escalator: {
+        emoji: '⚡', name: 'Escalator', color: 'var(--warning)',
+        role: 'Threat Level Scoring & Escalation',
+        desc: 'Evaluates combined threat severity using a weighted scoring system. Triggers alerts and autonomous dispatch when thresholds are exceeded.',
+        metrics_explain: { score: 'Threat score (0-100). >60 = critical, >30 = warning', level: 'Current escalation level', factors: 'What contributed to the score', actions: 'Automated actions taken', last_eval: 'Last evaluation timestamp' }
+      },
+      briefing: {
+        emoji: '📋', name: 'Briefing', color: 'var(--cyan)',
+        role: 'AI Preparedness Report Generation',
+        desc: 'Generates comprehensive situational briefings combining weather intelligence, inventory status, and tactical recommendations using Groq LLM.',
+        metrics_explain: {}
+      },
     }
 
     const agentsObj = agentStatus?.agents || {}
@@ -2373,7 +2393,11 @@ function App() {
     const handleGenerateBriefing = async () => {
       setBriefingLoading(true)
       try {
-        const res = await fetch(`${API_URL}/api/agents/briefing`, { method: 'POST' })
+        const res = await fetch(`${API_URL}/api/agents/briefing`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type: 'on_demand' }),
+        })
         const data = await res.json()
         setAgentBriefing(data)
       } catch (err) {
@@ -2386,7 +2410,7 @@ function App() {
       <div className="tab-pane animate-fade-in">
         <div className="tab-header">
           <h2>🤖 Autonomous Agent System</h2>
-          <p className="tab-subtitle">Real-time monitoring of autonomous resilience agents</p>
+          <p className="tab-subtitle">4 AI agents operate autonomously — monitoring threats, evaluating readiness, and generating intelligence reports without human intervention</p>
         </div>
 
         {/* System Overview */}
@@ -2434,24 +2458,36 @@ function App() {
         {agents.length > 0 ? (
           <div className="agent-cards-grid">
             {agents.map((agent, idx) => {
-              const meta = AGENT_META[agent.id] || AGENT_META[agent.name?.toLowerCase()] || { emoji: '🤖', name: agent.name || agent.id, color: 'var(--text-muted)' }
+              const meta = AGENT_META[agent.id] || AGENT_META[agent.name?.toLowerCase()] || { emoji: '🤖', name: agent.name || agent.id, color: 'var(--text-muted)', role: 'Agent', desc: '', metrics_explain: {} }
               const status = agent.status || 'stopped'
               return (
                 <div key={idx} className={`agent-card status-${status}`}>
                   <div className="agent-card-header">
                     <div className="agent-card-name">
                       <span className="agent-emoji">{meta.emoji}</span>
-                      {meta.name}
+                      <div>
+                        <span>{meta.name}</span>
+                        <span style={{ display: 'block', fontSize: '0.68rem', color: 'var(--muted)', fontWeight: '400' }}>{meta.role}</span>
+                      </div>
                     </div>
                     <span className={`agent-card-status ${status}`}>{status}</span>
                   </div>
+                  {meta.desc && (
+                    <p style={{ fontSize: '0.75rem', color: 'var(--muted)', margin: '0.4rem 0 0.6rem', lineHeight: '1.4' }}>{meta.desc}</p>
+                  )}
                   <div className="agent-card-metrics">
-                    {agent.details && Object.entries(agent.details).slice(0, 4).map(([key, val]) => (
-                      <div key={key} className="agent-metric">
-                        <span className="agent-metric-label">{key.replace(/_/g, ' ')}</span>
-                        <span className="agent-metric-value">{typeof val === 'object' ? JSON.stringify(val) : String(val)}</span>
-                      </div>
-                    ))}
+                    {agent.details && Object.entries(agent.details).slice(0, 5).map(([key, val]) => {
+                      const explain = meta.metrics_explain?.[key]
+                      return (
+                        <div key={key} className="agent-metric" title={explain || ''}>
+                          <span className="agent-metric-label">{key.replace(/_/g, ' ')}</span>
+                          <span className="agent-metric-value">
+                            {Array.isArray(val) ? val.join(', ') : typeof val === 'object' ? JSON.stringify(val) : String(val)}
+                          </span>
+                          {explain && <span style={{ fontSize: '0.6rem', color: 'var(--muted)', display: 'block', marginTop: '1px' }}>{explain}</span>}
+                        </div>
+                      )
+                    })}
                   </div>
                   {agent.last_heartbeat && (
                     <div className="agent-heartbeat">
